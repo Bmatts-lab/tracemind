@@ -9,7 +9,7 @@
     <ApplicationIcon>Assets\tracemind.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>TraceMind</Product>
     <Description>AI-assisted PCB design</Description>
     <InvariantGlobalization>true</InvariantGlobalization>

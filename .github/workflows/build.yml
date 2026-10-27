@@ -6,6 +6,9 @@ on:
     tags: ['v*']
   pull_request:
 
+permissions:
+  contents: write
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -16,8 +19,12 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Test
         run: dotnet test tests/TraceMind.Tests -c Release
+      - name: Version from tag
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: echo "VERSION_ARG=-p:Version=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
       - name: Publish TraceMind.exe
-        run: dotnet publish src/TraceMind.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o publish
+        run: dotnet publish src/TraceMind.App -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true ${{ env.VERSION_ARG }} -o publish
       - uses: actions/upload-artifact@v4
         with:
           name: TraceMind-win-x64
@@ -27,3 +34,4 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: publish/TraceMind.exe
+          body_path: CHANGELOG.md

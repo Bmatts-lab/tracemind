@@ -77,6 +77,10 @@ public partial class MainWindow : Window
         Pcb.LayerChanged += l => { if (CbLayer.SelectedItem as string != l.Display()) CbLayer.SelectedItem = l.Display(); };
     }
 
+    public static string AppVersion =>
+        (System.Reflection.Assembly.GetEntryAssembly()?.GetCustomAttributes(typeof(System.Reflection.AssemblyInformationalVersionAttribute), false)
+            .FirstOrDefault() as System.Reflection.AssemblyInformationalVersionAttribute)?.InformationalVersion.Split('+')[0] ?? "dev";
+
     static Project NewProject() => new() { Name = "Untitled" };
 
     // ---- automation hooks (used by the screenshot tool and future scripting) ----
@@ -161,7 +165,7 @@ public partial class MainWindow : Window
         MiSettings.Click += async (_, _) => await OpenSettings();
         MiShortcuts.Click += async (_, _) => await Dialogs.Message(this, "Keyboard shortcuts", Dialogs.Shortcuts);
         MiAbout.Click += async (_, _) => await Dialogs.Message(this, "About TraceMind",
-            "TraceMind 0.1 — AI-assisted PCB design.\n\nSchematic capture, PCB layout, a grid autorouter, DRC, Gerber/Excellon/BOM/CPL export and KiCad interchange, with Claude as a built-in design engineer.\n\nClaude is a product of Anthropic. You use your own Anthropic API key.");
+            $"TraceMind {AppVersion} — AI-assisted PCB design.\n\nSchematic capture, PCB layout, a grid autorouter, DRC, Gerber/Excellon/BOM/CPL export and KiCad interchange, with Claude as a built-in design engineer.\n\nClaude is a product of Anthropic. TraceMind uses your Claude plan (via Claude Code) or your own API key.");
         BuildRecentMenu();
 
         KeyDown += OnWindowKeyDown;
@@ -245,7 +249,7 @@ public partial class MainWindow : Window
     {
         var p = session.Project;
         var name = session.FilePath != null ? Path.GetFileName(session.FilePath) : p.Name;
-        Title = $"{name}{(session.Dirty ? " •" : "")} — TraceMind";
+        Title = $"{name}{(session.Dirty ? " •" : "")} — TraceMind {AppVersion}";
         int parts = p.Components.Count(c => p.Symbol(c)?.IsPower != true);
         int unplaced = p.Components.Count(c => !c.Placed && !c.DoNotPopulate && p.Footprint(c) != null && p.Symbol(c)?.IsPower != true);
         var stats = $"{parts} parts · {session.Netlist.Nets.Count} nets · {session.Connectivity.Airwires.Count} unrouted";
