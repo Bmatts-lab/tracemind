@@ -3,7 +3,6 @@ name: build
 on:
   push:
     branches: [main]
-    tags: ['v*']
   pull_request:
 
 permissions:
@@ -29,9 +28,15 @@ jobs:
         with:
           name: TraceMind-win-x64
           path: publish/TraceMind.exe
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
-        with:
-          files: publish/TraceMind.exe
-          body_path: CHANGELOG.md
+      - name: Publish a GitHub Release when the version changes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/TraceMind.App/TraceMind.App.csproj)
+          if gh release view "v$VERSION" > /dev/null 2>&1; then
+            echo "Release v$VERSION already exists - skipping"
+          else
+            gh release create "v$VERSION" publish/TraceMind.exe --title "TraceMind $VERSION" --notes-file CHANGELOG.md --target "$GITHUB_SHA"
+          fi
