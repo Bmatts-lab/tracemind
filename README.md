@@ -2,7 +2,7 @@
 
 AI-assisted PCB design for Windows. Describe a board and Claude does the rest: it researches real parts on the web, draws the schematic, places and routes the PCB, and checks it. You can edit everything by hand.
 
-It runs on **your own Anthropic API key**, so you pay per use with no monthly subscription or usage cap. The chat panel shows a running cost estimate.
+The AI can run on **the Claude plan you already have** (Pro / Max) through Claude Code, with nothing extra to pay. Or it can use an Anthropic API key, which is billed per use.
 
 ![PCB editor](docs/screenshots/05-pcb-pour.png)
 
@@ -23,12 +23,15 @@ It runs on **your own Anthropic API key**, so you pay per use with no monthly su
 ## Getting started
 
 1. Download `TraceMind.exe` from the latest release (or the `build` workflow artifact) and run it. It needs no install or .NET runtime.
-2. Click **⚙ Settings** and paste an API key from [console.anthropic.com](https://console.anthropic.com). It's stored encrypted for your Windows user.
+2. Connect Claude, using either option:
+   - **Your Claude plan (recommended):** install Claude Code by opening PowerShell and running `irm https://claude.ai/install.ps1 | iex`. Then run `claude` once and sign in with your Claude account. TraceMind finds it automatically, and usage counts toward your plan's normal limits.
+   - **API key:** in **⚙ Settings**, choose the API option and paste a key from [console.anthropic.com](https://console.anthropic.com).
 3. Click **⚡ Build a board**, or try **File → New from example**.
 
 ### Cost
 
-Each request is billed at Anthropic's API prices. The chat header shows an estimate of the current chat's cost. To spend less, pick Sonnet or Haiku in Settings or lower the effort. Opus 5.5 at "high" gives the most careful designs.
+- **Claude plan:** there's no extra charge. Big "build a board" runs use a fair share of your plan's usage limits.
+- **API key:** each request is billed at API prices, and the chat header shows a running estimate. To spend less, pick Sonnet or Haiku in Settings.
 
 ## Building from source
 

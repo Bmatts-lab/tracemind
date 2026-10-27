@@ -13,7 +13,16 @@ public sealed record AgentEvent(AgentEventKind Kind, string Text, string? Detail
 /// Conversational PCB design agent. Keeps the conversation history, calls Claude with the design tools
 /// plus web search / fetch, runs tool calls through the host (UI thread) and reports progress events.
 /// </summary>
-public sealed class ClaudeAgent
+/// <summary>Common surface of the two AI back-ends (Claude API key, or the user's Claude plan via Claude Code).</summary>
+public interface IDesignAgent
+{
+    event Action<AgentEvent>? OnEvent;
+    bool Busy { get; }
+    void Reset();
+    Task SendAsync(string userText, CancellationToken ct);
+}
+
+public sealed class ClaudeAgent : IDesignAgent
 {
     readonly AgentSettings settings;
     readonly DesignTools tools;
@@ -60,7 +69,7 @@ public sealed class ClaudeAgent
         OnEvent?.Invoke(new(AgentEventKind.Usage, $"≈ ${ConversationCost:0.00} this chat", $"{ConversationTokens:N0} tokens · ≈ ${TotalSessionCost:0.00} since the app started (estimate at list prices)"));
     }
 
-    const string SystemPrompt = """
+    internal const string SystemPrompt = """
         You are TraceMind's built-in PCB design engineer. You work inside a desktop EDA app on the user's open project
         (schematic + PCB) through tools, and you can research real parts on the web.
 

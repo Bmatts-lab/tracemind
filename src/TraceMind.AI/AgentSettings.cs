@@ -8,6 +8,12 @@ namespace TraceMind.AI;
 public sealed class AgentSettings
 {
     public string EncryptedApiKey { get; set; } = "";
+    /// <summary>"plan" = use the Claude subscription through the local Claude Code CLI; "api" = Anthropic API key.</summary>
+    public string Backend { get; set; } = "";
+    /// <summary>Optional explicit path to the claude executable.</summary>
+    public string ClaudeCodePath { get; set; } = "";
+    /// <summary>Model alias for plan mode (opus / sonnet / haiku); empty = Claude Code's default for the plan.</summary>
+    public string PlanModel { get; set; } = "";
     public string Model { get; set; } = "claude-opus-5-5";
     /// <summary>low | medium | high | xhigh | max</summary>
     public string Effort { get; set; } = "high";

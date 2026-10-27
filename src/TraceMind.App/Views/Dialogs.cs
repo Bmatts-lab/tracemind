@@ -100,6 +100,27 @@ public static class Dialogs
     public static async Task<bool> Settings(Window owner, AgentSettings s)
     {
         bool saved = false;
+        bool planDefault = s.Backend == "plan" || (s.Backend == "" && string.IsNullOrWhiteSpace(s.ApiKey));
+        var usePlan = new RadioButton { GroupName = "backend", IsChecked = planDefault, Content = new TextBlock { Text = "Use my Claude plan (Pro / Max) through Claude Code — no API bill", TextWrapping = TextWrapping.Wrap } };
+        var useApi = new RadioButton { GroupName = "backend", IsChecked = !planDefault, Content = new TextBlock { Text = "Use an Anthropic API key (pay per use)", TextWrapping = TextWrapping.Wrap } };
+        var ccStatus = new TextBlock { Text = "Checking for Claude Code…", Classes = { "hint" } };
+        const string installCmd = "irm https://claude.ai/install.ps1 | iex";
+        var planModel = new ComboBox { ItemsSource = new[] { "Plan default", "opus", "sonnet", "haiku" }, SelectedItem = s.PlanModel == "" ? "Plan default" : s.PlanModel, HorizontalAlignment = HorizontalAlignment.Stretch };
+        var copyInstall = new Button { Content = "Copy install command", Padding = new Thickness(10, 3), FontSize = 12, IsVisible = false };
+        copyInstall.Click += async (_, _) => { if (TopLevel.GetTopLevel(copyInstall)?.Clipboard is { } cb) await cb.SetTextAsync(installCmd); };
+        _ = Task.Run(async () =>
+        {
+            var v = await TraceMind.AI.ClaudeCodeAgent.ProbeAsync(s.ClaudeCodePath);
+            Avalonia.Threading.Dispatcher.UIThread.Post(() =>
+            {
+                if (v != null) ccStatus.Text = $"✓ Claude Code found ({v}). If you haven't yet, run `claude` once in a terminal and sign in with your Claude account.";
+                else
+                {
+                    ccStatus.Text = $"Claude Code isn't installed. Open PowerShell and run:\n    {installCmd}\nthen run `claude` once and sign in with your Claude account. Restart TraceMind afterwards.";
+                    copyInstall.IsVisible = true;
+                }
+            });
+        });
         var key = new TextBox { Text = s.ApiKey, PasswordChar = '•', Watermark = "sk-ant-…" };
         var reveal = new CheckBox { Content = "Show key" };
         reveal.IsCheckedChanged += (_, _) => key.PasswordChar = reveal.IsChecked == true ? '\0' : '•';
@@ -122,9 +143,11 @@ public static class Dialogs
             Children =
             {
                 new TextBlock { Text = "Claude settings", FontSize = 18, FontWeight = FontWeight.SemiBold },
-                new TextBlock { Text = "TraceMind calls the Claude API with your own key. Get one at console.anthropic.com → API keys. The key is stored encrypted for your Windows user account.", Classes = { "hint" } },
-                H("API KEY"), key, reveal,
-                H("MODEL"), model,
+                new TextBlock { Text = "Your Claude plan works through Claude Code (free with Pro / Max): usage counts toward your plan's normal limits. Alternatively use an API key from console.anthropic.com (stored encrypted for your Windows user).", Classes = { "hint" } },
+                H("HOW TRACEMIND TALKS TO CLAUDE"), usePlan, ccStatus, copyInstall,
+                H("MODEL ON YOUR PLAN"), planModel, useApi,
+                H("API KEY (only for the API option)"), key, reveal,
+                H("API MODEL"), model,
                 new TextBlock { Text = "Opus 5.5 is the default. Fable 5.1 is the most capable (and slowest/most expensive); Sonnet and Haiku are faster and cheaper.", Classes = { "hint" } },
                 H("EFFORT"), effort,
                 new TextBlock { Text = "Higher effort = more careful designs, more tokens. 'high' is a good default for board design.", Classes = { "hint" } },
@@ -137,6 +160,8 @@ public static class Dialogs
         save.Click += (_, _) =>
         {
             s.ApiKey = key.Text ?? "";
+            s.Backend = usePlan.IsChecked == true ? "plan" : "api";
+            s.PlanModel = planModel.SelectedItem as string is { } pm && pm != "Plan default" ? pm : "";
             s.Model = model.SelectedItem as string ?? s.Model;
             s.Effort = effort.SelectedItem as string ?? s.Effort;
             s.WebSearch = web.IsChecked == true; s.ShowThinking = thinking.IsChecked == true;

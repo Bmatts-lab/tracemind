@@ -22,7 +22,11 @@ public partial class MainWindow : Window
     readonly DesignSession session;
     readonly AgentSettings settings = AgentSettings.Load();
     readonly DesignTools tools;
-    readonly ClaudeAgent agent;
+    ClaudeAgent apiAgent = null!;
+    ClaudeCodeAgent planAgent = null!;
+    IDesignAgent agent => UsePlan ? planAgent : apiAgent;
+    /// <summary>Use the Claude subscription via Claude Code unless the user picked the API (or only has a key).</summary>
+    bool UsePlan => settings.Backend == "plan" || (settings.Backend == "" && (string.IsNullOrWhiteSpace(settings.ApiKey) || ClaudeCodeAgent.FindClaude(settings.ClaudeCodePath) != null));
     CancellationTokenSource? agentCts;
     bool routing;
     bool fitPcbPending = true, fitSchPending = true;
@@ -35,8 +39,10 @@ public partial class MainWindow : Window
         Sch.Attach(session); Pcb.Attach(session);
         Library.Attach(session); Properties.Attach(session);
         tools = new DesignTools(() => session.Project);
-        agent = new ClaudeAgent(settings, tools, RunToolAsync);
-        agent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
+        apiAgent = new ClaudeAgent(settings, tools, RunToolAsync);
+        apiAgent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
+        planAgent = new ClaudeCodeAgent(settings, RunToolAsync);
+        planAgent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
 
         session.Changed += UpdateTitleAndStats;
         session.SelectionChanged += () => { if (session.SelectedComponents.Count == 1) LeftTabs.SelectedIndex = 1; };
@@ -50,10 +56,13 @@ public partial class MainWindow : Window
         Opened += (_, _) =>
         {
             Dispatcher.UIThread.Post(() => { Sch.ZoomToFit(); fitSchPending = false; }, DispatcherPriority.Background);
-            if (string.IsNullOrWhiteSpace(settings.ApiKey))
+            if (UsePlan && ClaudeCodeAgent.FindClaude(settings.ClaudeCodePath) == null)
+                Chat.Handle(new AgentEvent(AgentEventKind.Status, "To use your Claude plan, install Claude Code — see Settings (⚙)."));
+            else if (!UsePlan && string.IsNullOrWhiteSpace(settings.ApiKey))
                 Chat.Handle(new AgentEvent(AgentEventKind.Status, "Add your Claude API key in Settings (⚙) to enable the AI."));
         };
         Closing += OnClosing;
+        Closed += (_, _) => planAgent.Dispose();
         Sch.CursorMoved += w => StCursor.Text = $"X {w.X,8:0.00}  Y {w.Y,8:0.00} mm";
         Pcb.CursorMoved += w => StCursor.Text = $"X {w.X,8:0.000}  Y {w.Y,8:0.000} mm";
         Sch.StatusMessage += s => StMessage.Text = s;
@@ -97,7 +106,7 @@ public partial class MainWindow : Window
     void LoadProject(Project p, string? path)
     {
         session.Replace(p, path);
-        agent.Reset();
+        apiAgent.Reset(); planAgent.Reset();
         Chat.Clear();
         fitSchPending = true; fitPcbPending = true;
         Dispatcher.UIThread.Post(() => { if (EditorTabs.SelectedIndex == 0) { Sch.ZoomToFit(); fitSchPending = false; } else { Pcb.ZoomToFit(); fitPcbPending = false; } }, DispatcherPriority.Background);
@@ -439,7 +448,7 @@ public partial class MainWindow : Window
             await Task.Run(() => agent.SendAsync(text, ct));
         };
         Chat.StopRequested += () => agentCts?.Cancel();
-        Chat.NewChatRequested += () => agent.Reset();
+        Chat.NewChatRequested += () => { apiAgent.Reset(); planAgent.Reset(); };
         Chat.SettingsRequested += async () => await OpenSettings();
         Chat.BuildRequested += async () => await BuildBoardAsync();
     }
@@ -471,10 +480,17 @@ public partial class MainWindow : Window
 
     async Task OpenSettings()
     {
-        if (await Dialogs.Settings(this, settings)) UpdateModelLabel();
+        var backendBefore = UsePlan;
+        if (await Dialogs.Settings(this, settings))
+        {
+            UpdateModelLabel();
+            if (backendBefore != UsePlan) { apiAgent.Reset(); planAgent.Reset(); Chat.Clear(); }
+        }
     }
 
-    void UpdateModelLabel() => Chat.SetModelLabel($"{settings.Model} · {settings.Effort}" + (string.IsNullOrWhiteSpace(settings.ApiKey) ? " · no API key" : ""));
+    void UpdateModelLabel() => Chat.SetModelLabel(UsePlan
+        ? "your Claude plan" + (settings.PlanModel != "" ? " · " + settings.PlanModel : "")
+        : $"API · {settings.Model} · {settings.Effort}" + (string.IsNullOrWhiteSpace(settings.ApiKey) ? " · no key" : ""));
 
     void OnAgentEvent(AgentEvent e)
     {
