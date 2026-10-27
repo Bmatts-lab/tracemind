@@ -1,0 +1,59 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{0E021C7C-DD22-4BB8-A55F-E7FAAFB38233}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TraceMind.Core", "src\TraceMind.Core\TraceMind.Core.csproj", "{D103196D-6EBF-4C4D-B0CE-65C369C18E9D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TraceMind.AI", "src\TraceMind.AI\TraceMind.AI.csproj", "{C075416C-38F1-4B55-A06C-98582335CF9F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TraceMind.App", "src\TraceMind.App\TraceMind.App.csproj", "{5A49B92C-EF74-414F-8939-F09D3A01ACF5}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{F5AB4F6E-E113-41D9-A542-B21D426A92AF}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TraceMind.Tests", "tests\TraceMind.Tests\TraceMind.Tests.csproj", "{44B6A8BF-40EF-4C7A-B765-2234E656CE1E}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tools", "tools", "{7882E8AB-FAE1-448F-A946-F9088FFDED9B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Screenshots", "tools\Screenshots\Screenshots.csproj", "{113BB4FC-5013-4D85-9D0D-33AAC3306B7D}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{D103196D-6EBF-4C4D-B0CE-65C369C18E9D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D103196D-6EBF-4C4D-B0CE-65C369C18E9D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D103196D-6EBF-4C4D-B0CE-65C369C18E9D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D103196D-6EBF-4C4D-B0CE-65C369C18E9D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{C075416C-38F1-4B55-A06C-98582335CF9F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{C075416C-38F1-4B55-A06C-98582335CF9F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{C075416C-38F1-4B55-A06C-98582335CF9F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{C075416C-38F1-4B55-A06C-98582335CF9F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{5A49B92C-EF74-414F-8939-F09D3A01ACF5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{5A49B92C-EF74-414F-8939-F09D3A01ACF5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{5A49B92C-EF74-414F-8939-F09D3A01ACF5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{5A49B92C-EF74-414F-8939-F09D3A01ACF5}.Release|Any CPU.Build.0 = Release|Any CPU
+		{44B6A8BF-40EF-4C7A-B765-2234E656CE1E}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{44B6A8BF-40EF-4C7A-B765-2234E656CE1E}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{44B6A8BF-40EF-4C7A-B765-2234E656CE1E}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{44B6A8BF-40EF-4C7A-B765-2234E656CE1E}.Release|Any CPU.Build.0 = Release|Any CPU
+		{113BB4FC-5013-4D85-9D0D-33AAC3306B7D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{113BB4FC-5013-4D85-9D0D-33AAC3306B7D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{113BB4FC-5013-4D85-9D0D-33AAC3306B7D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{113BB4FC-5013-4D85-9D0D-33AAC3306B7D}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{D103196D-6EBF-4C4D-B0CE-65C369C18E9D} = {0E021C7C-DD22-4BB8-A55F-E7FAAFB38233}
+		{C075416C-38F1-4B55-A06C-98582335CF9F} = {0E021C7C-DD22-4BB8-A55F-E7FAAFB38233}
+		{5A49B92C-EF74-414F-8939-F09D3A01ACF5} = {0E021C7C-DD22-4BB8-A55F-E7FAAFB38233}
+		{44B6A8BF-40EF-4C7A-B765-2234E656CE1E} = {F5AB4F6E-E113-41D9-A542-B21D426A92AF}
+		{113BB4FC-5013-4D85-9D0D-33AAC3306B7D} = {7882E8AB-FAE1-448F-A946-F9088FFDED9B}
+	EndGlobalSection
+EndGlobal

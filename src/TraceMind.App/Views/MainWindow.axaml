@@ -1,0 +1,173 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:c="using:TraceMind.App.Controls"
+        xmlns:v="using:TraceMind.App.Views"
+        x:Class="TraceMind.App.Views.MainWindow"
+        Title="TraceMind"
+        Icon="/Assets/tracemind.ico"
+        Width="1560" Height="940" MinWidth="1000" MinHeight="640"
+        WindowStartupLocation="CenterScreen">
+  <DockPanel>
+    <!-- ===== Menu ===== -->
+    <Menu DockPanel.Dock="Top" Background="#0F1115" Padding="4,0">
+      <MenuItem Header="_File">
+        <MenuItem Header="_New project" x:Name="MiNew" InputGesture="Ctrl+N" />
+        <MenuItem Header="New from _example (ATtiny85 USB board)" x:Name="MiExample" />
+        <MenuItem Header="_Open…" x:Name="MiOpen" InputGesture="Ctrl+O" />
+        <MenuItem Header="Open _recent" x:Name="MiRecent" />
+        <Separator />
+        <MenuItem Header="_Save" x:Name="MiSave" InputGesture="Ctrl+S" />
+        <MenuItem Header="Save _as…" x:Name="MiSaveAs" InputGesture="Ctrl+Shift+S" />
+        <Separator />
+        <MenuItem Header="_Import">
+          <MenuItem Header="KiCad board (.kicad_pcb)…" x:Name="MiImportPcb" />
+          <MenuItem Header="KiCad netlist (.net)…" x:Name="MiImportNet" />
+        </MenuItem>
+        <MenuItem Header="_Export">
+          <MenuItem Header="Fabrication outputs (Gerber, drill, BOM, CPL)…" x:Name="MiExportFab" />
+          <MenuItem Header="KiCad board (.kicad_pcb)…" x:Name="MiExportPcb" />
+          <MenuItem Header="KiCad netlist (.net)…" x:Name="MiExportNet" />
+          <MenuItem Header="BOM (.csv)…" x:Name="MiExportBom" />
+        </MenuItem>
+        <Separator />
+        <MenuItem Header="E_xit" x:Name="MiExit" />
+      </MenuItem>
+      <MenuItem Header="_Edit">
+        <MenuItem Header="_Undo" x:Name="MiUndo" InputGesture="Ctrl+Z" />
+        <MenuItem Header="_Redo" x:Name="MiRedo" InputGesture="Ctrl+Y" />
+        <Separator />
+        <MenuItem Header="_Delete selection" x:Name="MiDelete" InputGesture="Delete" />
+        <MenuItem Header="Tidy _schematic" x:Name="MiTidy" />
+      </MenuItem>
+      <MenuItem Header="_View">
+        <MenuItem Header="Zoom to _fit" x:Name="MiFit" InputGesture="F" />
+        <MenuItem Header="_Schematic" x:Name="MiViewSch" InputGesture="Ctrl+1" />
+        <MenuItem Header="_PCB" x:Name="MiViewPcb" InputGesture="Ctrl+2" />
+        <Separator />
+        <MenuItem Header="Show _ratsnest" x:Name="MiRatsnest" ToggleType="CheckBox" IsChecked="True" />
+        <MenuItem Header="Show copper _pours" x:Name="MiZones" ToggleType="CheckBox" IsChecked="True" />
+        <MenuItem Header="Show _DRC markers" x:Name="MiDrcMarkers" ToggleType="CheckBox" IsChecked="True" />
+      </MenuItem>
+      <MenuItem Header="_PCB">
+        <MenuItem Header="_Board setup…" x:Name="MiBoardSetup" />
+        <MenuItem Header="Auto-_place unplaced parts" x:Name="MiAutoPlace" />
+        <MenuItem Header="Auto-place _all (unlocked)" x:Name="MiAutoPlaceAll" />
+        <MenuItem Header="_Autoroute" x:Name="MiAutoroute" InputGesture="Ctrl+R" />
+        <MenuItem Header="_Clear routing" x:Name="MiClearRouting" />
+        <MenuItem Header="Add _GND pour (bottom)" x:Name="MiGndPour" />
+        <MenuItem Header="Add _mounting holes" x:Name="MiHoles" />
+        <Separator />
+        <MenuItem Header="Run _DRC" x:Name="MiDrc" InputGesture="Ctrl+D" />
+        <MenuItem Header="_Sync track nets from schematic" x:Name="MiSyncNets" />
+      </MenuItem>
+      <MenuItem Header="_AI">
+        <MenuItem Header="_Build a complete board from a description…" x:Name="MiAiBuild" />
+        <MenuItem Header="Review my design" x:Name="MiAiReview" />
+        <MenuItem Header="Place and route the board" x:Name="MiAiRoute" />
+        <MenuItem Header="Fill in part numbers (LCSC / MPN)" x:Name="MiAiParts" />
+        <Separator />
+        <MenuItem Header="_Settings (API key, model)…" x:Name="MiSettings" />
+      </MenuItem>
+      <MenuItem Header="_Help">
+        <MenuItem Header="Keyboard shortcuts" x:Name="MiShortcuts" />
+        <MenuItem Header="About TraceMind" x:Name="MiAbout" />
+      </MenuItem>
+    </Menu>
+
+    <!-- ===== Toolbar ===== -->
+    <Border DockPanel.Dock="Top" Background="#14161B" BorderBrush="#232730" BorderThickness="0,0,0,1" Padding="6,4">
+      <DockPanel>
+        <StackPanel Orientation="Horizontal" Spacing="2" DockPanel.Dock="Left">
+          <Button Classes="tool" x:Name="TbNew" ToolTip.Tip="New project">New</Button>
+          <Button Classes="tool" x:Name="TbOpen" ToolTip.Tip="Open project">Open</Button>
+          <Button Classes="tool" x:Name="TbSave" ToolTip.Tip="Save (Ctrl+S)">Save</Button>
+          <Rectangle Width="1" Fill="#2A2F38" Margin="6,2" />
+          <Button Classes="tool" x:Name="TbUndo" ToolTip.Tip="Undo (Ctrl+Z)">↶</Button>
+          <Button Classes="tool" x:Name="TbRedo" ToolTip.Tip="Redo (Ctrl+Y)">↷</Button>
+          <Rectangle Width="1" Fill="#2A2F38" Margin="6,2" />
+          <!-- schematic tools -->
+          <StackPanel Orientation="Horizontal" x:Name="SchTools" Spacing="2">
+            <ToggleButton Classes="tool" x:Name="TbSchSelect" IsChecked="True" ToolTip.Tip="Select / move (S)">Select</ToggleButton>
+            <ToggleButton Classes="tool" x:Name="TbSchWire" ToolTip.Tip="Draw wire (W). Space toggles corner direction.">Wire</ToggleButton>
+            <ToggleButton Classes="tool" x:Name="TbSchLabel" ToolTip.Tip="Net label (L)">Label</ToggleButton>
+            <ToggleButton Classes="tool" x:Name="TbSchNc" ToolTip.Tip="No-connect flag (Q)">No-connect</ToggleButton>
+          </StackPanel>
+          <!-- pcb tools -->
+          <StackPanel Orientation="Horizontal" x:Name="PcbTools" Spacing="2" IsVisible="False">
+            <ToggleButton Classes="tool" x:Name="TbPcbSelect" IsChecked="True" ToolTip.Tip="Select / move (S). R rotate, F flip, L lock">Select</ToggleButton>
+            <ToggleButton Classes="tool" x:Name="TbPcbRoute" ToolTip.Tip="Route tracks (X). V = via">Route</ToggleButton>
+            <ToggleButton Classes="tool" x:Name="TbPcbVia" ToolTip.Tip="Place via">Via</ToggleButton>
+            <Rectangle Width="1" Fill="#2A2F38" Margin="6,2" />
+            <TextBlock Text="Layer" VerticalAlignment="Center" Foreground="#8A93A3" Margin="4,0" />
+            <ComboBox x:Name="CbLayer" Width="140" />
+            <TextBlock Text="Grid" VerticalAlignment="Center" Foreground="#8A93A3" Margin="8,0,4,0" />
+            <ComboBox x:Name="CbGrid" Width="90" />
+            <Rectangle Width="1" Fill="#2A2F38" Margin="6,2" />
+            <Button Classes="tool" x:Name="TbAutoPlace" ToolTip.Tip="Auto-place unplaced parts">Auto-place</Button>
+            <Button Classes="tool" x:Name="TbAutoroute" ToolTip.Tip="Autoroute all nets (Ctrl+R)">Autoroute</Button>
+            <Button Classes="tool" x:Name="TbDrc" ToolTip.Tip="Run design rule check (Ctrl+D)">DRC</Button>
+          </StackPanel>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal" DockPanel.Dock="Right" HorizontalAlignment="Right" Spacing="4">
+          <Button Classes="tool" x:Name="TbExport" ToolTip.Tip="Export Gerbers, drill, BOM and pick-and-place">Export for fab</Button>
+          <Button Classes="tool" x:Name="TbSettings" ToolTip.Tip="Settings">⚙</Button>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <!-- ===== Status bar ===== -->
+    <Border DockPanel.Dock="Bottom" Background="#0F1115" BorderBrush="#232730" BorderThickness="0,1,0,0" Padding="10,3">
+      <DockPanel>
+        <TextBlock x:Name="StCursor" DockPanel.Dock="Right" Foreground="#8A93A3" FontFamily="Cascadia Mono, Consolas, monospace" FontSize="12" Margin="16,0,0,0" />
+        <TextBlock x:Name="StStats" DockPanel.Dock="Right" Foreground="#8A93A3" FontSize="12" Margin="16,0,0,0" />
+        <TextBlock x:Name="StMessage" Foreground="#C9D1DC" FontSize="12" TextTrimming="CharacterEllipsis" />
+      </DockPanel>
+    </Border>
+
+    <!-- ===== Main area ===== -->
+    <Grid ColumnDefinitions="270,4,*,4,400">
+      <!-- left panel -->
+      <Border Grid.Column="0" Classes="panel">
+        <TabControl x:Name="LeftTabs" Padding="0">
+          <TabItem Header="Parts">
+            <v:LibraryPanel x:Name="Library" />
+          </TabItem>
+          <TabItem Header="Properties">
+            <v:PropertiesPanel x:Name="Properties" />
+          </TabItem>
+        </TabControl>
+      </Border>
+      <GridSplitter Grid.Column="1" Background="#1B1E24" ResizeDirection="Columns" />
+
+      <!-- editors -->
+      <Grid Grid.Column="2" RowDefinitions="*,4,170">
+        <TabControl x:Name="EditorTabs" Grid.Row="0" Padding="0">
+          <TabItem Header="Schematic">
+            <c:SchematicCanvas x:Name="Sch" />
+          </TabItem>
+          <TabItem Header="PCB">
+            <c:PcbCanvas x:Name="Pcb" />
+          </TabItem>
+        </TabControl>
+        <GridSplitter Grid.Row="1" Background="#1B1E24" ResizeDirection="Rows" />
+        <Border Grid.Row="2" Classes="panel">
+          <DockPanel>
+            <Border DockPanel.Dock="Top" Padding="10,4" Background="#13151A">
+              <DockPanel>
+                <Button x:Name="BtnRunDrc" DockPanel.Dock="Right" Padding="10,2" FontSize="12">Run DRC</Button>
+                <TextBlock x:Name="ProblemsTitle" Text="Problems" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="#9FB0C4" />
+              </DockPanel>
+            </Border>
+            <ListBox x:Name="Problems" Background="#15171C" FontSize="12" />
+          </DockPanel>
+        </Border>
+      </Grid>
+      <GridSplitter Grid.Column="3" Background="#1B1E24" ResizeDirection="Columns" />
+
+      <!-- AI chat -->
+      <Border Grid.Column="4" Classes="panel">
+        <v:ChatPanel x:Name="Chat" />
+      </Border>
+    </Grid>
+  </DockPanel>
+</Window>

@@ -1,0 +1,523 @@
+using System.Text.Json;
+using Avalonia;
+using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Input;
+using Avalonia.Interactivity;
+using Avalonia.Platform.Storage;
+using Avalonia.Threading;
+using TraceMind.AI;
+using TraceMind.App.Controls;
+using TraceMind.Core.Export;
+using TraceMind.Core.Geometry;
+using TraceMind.Core.KiCad;
+using TraceMind.Core.Model;
+using TraceMind.Core.Pcb;
+using TraceMind.Core.Samples;
+
+namespace TraceMind.App.Views;
+
+public partial class MainWindow : Window
+{
+    readonly DesignSession session;
+    readonly AgentSettings settings = AgentSettings.Load();
+    readonly DesignTools tools;
+    readonly ClaudeAgent agent;
+    CancellationTokenSource? agentCts;
+    bool routing;
+    bool fitPcbPending = true, fitSchPending = true;
+    bool closingConfirmed;
+
+    public MainWindow()
+    {
+        InitializeComponent();
+        session = new DesignSession(NewProject());
+        Sch.Attach(session); Pcb.Attach(session);
+        Library.Attach(session); Properties.Attach(session);
+        tools = new DesignTools(() => session.Project);
+        agent = new ClaudeAgent(settings, tools, RunToolAsync);
+        agent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
+
+        session.Changed += UpdateTitleAndStats;
+        session.SelectionChanged += () => { if (session.SelectedComponents.Count == 1) LeftTabs.SelectedIndex = 1; };
+
+        WireMenus();
+        WireToolbar();
+        WireChat();
+        UpdateTitleAndStats();
+        UpdateModelLabel();
+        EditorTabs.SelectionChanged += (_, _) => OnEditorTabChanged();
+        Opened += (_, _) =>
+        {
+            Dispatcher.UIThread.Post(() => { Sch.ZoomToFit(); fitSchPending = false; }, DispatcherPriority.Background);
+            if (string.IsNullOrWhiteSpace(settings.ApiKey))
+                Chat.Handle(new AgentEvent(AgentEventKind.Status, "Add your Claude API key in Settings (⚙) to enable the AI."));
+        };
+        Closing += OnClosing;
+        Sch.CursorMoved += w => StCursor.Text = $"X {w.X,8:0.00}  Y {w.Y,8:0.00} mm";
+        Pcb.CursorMoved += w => StCursor.Text = $"X {w.X,8:0.000}  Y {w.Y,8:0.000} mm";
+        Sch.StatusMessage += s => StMessage.Text = s;
+        Pcb.StatusMessage += s => StMessage.Text = s;
+        Sch.PromptLabel = name => Dialogs.Prompt(this, "Net label", "Net name (e.g. GND, +3V3, SDA):", name);
+        Sch.ComponentDoubleClicked += _ => LeftTabs.SelectedIndex = 1;
+        Pcb.ComponentDoubleClicked += _ => LeftTabs.SelectedIndex = 1;
+        Library.PlaceRequested += (id, value, fp) => { EditorTabs.SelectedIndex = 0; Sch.BeginPlace(id, value, fp); Sch.Focus(); };
+        Properties.OpenUrl += url => _ = Launcher.LaunchUriAsync(new Uri(url));
+        Sch.ToolChanged += t => { TbSchSelect.IsChecked = t == SchTool.Select; TbSchWire.IsChecked = t == SchTool.Wire; TbSchLabel.IsChecked = t == SchTool.Label; TbSchNc.IsChecked = t == SchTool.NoConnect; };
+        Pcb.ToolChanged += t => { TbPcbSelect.IsChecked = t == PcbTool.Select; TbPcbRoute.IsChecked = t == PcbTool.Route; TbPcbVia.IsChecked = t == PcbTool.Via; };
+        Pcb.LayerChanged += l => { if (CbLayer.SelectedItem as string != l.Display()) CbLayer.SelectedItem = l.Display(); };
+    }
+
+    static Project NewProject() => new() { Name = "Untitled" };
+
+    // ---- automation hooks (used by the screenshot tool and future scripting) ----
+    public DesignSession Session => session;
+    public void LoadForAutomation(Project p) => LoadProject(p, null);
+    public void ShowEditor(int index) => EditorTabs.SelectedIndex = index;
+    public Task RouteForAutomation() => AutorouteAsync();
+    public void DrcForAutomation() => RunDrc();
+    public ChatPanel ChatView => Chat;
+    public SchematicCanvas SchematicView => Sch;
+    public PcbCanvas PcbView => Pcb;
+
+    public void OpenPath(string path)
+    {
+        try
+        {
+            Project p = path.EndsWith(".kicad_pcb", StringComparison.OrdinalIgnoreCase) ? KiCadPcb.Import(File.ReadAllText(path), Path.GetFileNameWithoutExtension(path)).Project
+                : path.EndsWith(".net", StringComparison.OrdinalIgnoreCase) ? KiCadNetlist.Import(File.ReadAllText(path), Path.GetFileNameWithoutExtension(path)).Project
+                : ProjectFile.Load(path);
+            bool native = path.EndsWith(ProjectFile.Extension, StringComparison.OrdinalIgnoreCase);
+            LoadProject(p, native ? path : null);
+            if (native) { settings.AddRecent(path); settings.Save(); BuildRecentMenu(); }
+        }
+        catch (Exception ex) { _ = Dialogs.Message(this, "Could not open file", ex.Message); }
+    }
+
+    void LoadProject(Project p, string? path)
+    {
+        session.Replace(p, path);
+        agent.Reset();
+        Chat.Clear();
+        fitSchPending = true; fitPcbPending = true;
+        Dispatcher.UIThread.Post(() => { if (EditorTabs.SelectedIndex == 0) { Sch.ZoomToFit(); fitSchPending = false; } else { Pcb.ZoomToFit(); fitPcbPending = false; } }, DispatcherPriority.Background);
+        Problems.ItemsSource = null;
+        UpdateTitleAndStats();
+    }
+
+    // ======================= menus & toolbar =======================
+
+    void WireMenus()
+    {
+        MiNew.Click += async (_, _) => { if (await ConfirmDiscard()) LoadProject(NewProject(), null); };
+        MiExample.Click += async (_, _) => { if (await ConfirmDiscard()) LoadProject(SampleProjects.AttinyBlinker(), null); };
+        MiOpen.Click += async (_, _) => await OpenAsync();
+        MiSave.Click += async (_, _) => await SaveAsync(false);
+        MiSaveAs.Click += async (_, _) => await SaveAsync(true);
+        MiImportPcb.Click += async (_, _) => await ImportAsync("KiCad board", "*.kicad_pcb");
+        MiImportNet.Click += async (_, _) => await ImportAsync("KiCad netlist", "*.net");
+        MiExportFab.Click += async (_, _) => await ExportFabAsync();
+        MiExportPcb.Click += async (_, _) => await ExportTextAsync("KiCad board", ".kicad_pcb", () => KiCadPcb.Export(session.Project));
+        MiExportNet.Click += async (_, _) => await ExportTextAsync("KiCad netlist", ".net", () => KiCadNetlist.Export(session.Project));
+        MiExportBom.Click += async (_, _) => await ExportTextAsync("BOM", ".csv", () => BomExporter.Bom(session.Project));
+        MiExit.Click += (_, _) => Close();
+        MiUndo.Click += (_, _) => session.DoUndo();
+        MiRedo.Click += (_, _) => session.DoRedo();
+        MiDelete.Click += (_, _) => { if (EditorTabs.SelectedIndex == 0) Sch.DeleteSelection(); else Pcb.DeleteSelection(); };
+        MiTidy.Click += (_, _) => { session.Mutate(() => EditOps.TidySchematic(session.Project)); Sch.ZoomToFit(); };
+        MiFit.Click += (_, _) => CurrentCanvas.ZoomToFit();
+        MiViewSch.Click += (_, _) => EditorTabs.SelectedIndex = 0;
+        MiViewPcb.Click += (_, _) => EditorTabs.SelectedIndex = 1;
+        MiRatsnest.Click += (_, _) => { Pcb.ShowRatsnest = MiRatsnest.IsChecked; Pcb.InvalidateVisual(); };
+        MiZones.Click += (_, _) => { Pcb.ShowZones = MiZones.IsChecked; Pcb.InvalidateVisual(); };
+        MiDrcMarkers.Click += (_, _) => { Pcb.ShowDrc = MiDrcMarkers.IsChecked; Pcb.InvalidateVisual(); };
+        MiBoardSetup.Click += (_, _) => { session.ClearSelection(); LeftTabs.SelectedIndex = 1; Properties.Rebuild(); };
+        MiAutoPlace.Click += (_, _) => AutoPlace(false);
+        MiAutoPlaceAll.Click += (_, _) => AutoPlace(true);
+        MiAutoroute.Click += async (_, _) => await AutorouteAsync();
+        MiClearRouting.Click += (_, _) => session.Mutate(() => { session.Project.Board.Tracks.RemoveAll(t => !t.Locked); session.Project.Board.Vias.RemoveAll(v => !v.Locked); });
+        MiGndPour.Click += (_, _) => session.Mutate(() =>
+        {
+            var b = session.Project.Board;
+            b.Zones.RemoveAll(z => z.Layer == Layer.BCu && z.Net == "GND");
+            b.Zones.Add(new Zone { Net = "GND", Layer = Layer.BCu, Outline = [.. b.Outline] });
+        });
+        MiHoles.Click += (_, _) => session.Mutate(() => tools.Execute("add_mounting_holes", JsonDocument.Parse("{}").RootElement));
+        MiDrc.Click += (_, _) => RunDrc();
+        MiSyncNets.Click += (_, _) => { int n = 0; session.Mutate(() => n = EditOps.SyncBoardNets(session.Project)); StMessage.Text = $"Updated the net of {n} tracks."; };
+        MiAiBuild.Click += async (_, _) => await BuildBoardAsync();
+        MiAiReview.Click += (_, _) => Chat.Submit("Review my design: check the schematic for electrical mistakes (missing decoupling, floating inputs, wrong pull-ups, power issues), check part choices and the PCB layout, and run DRC. List concrete problems and fix the clear-cut ones.");
+        MiAiRoute.Click += (_, _) => Chat.Submit("Place the parts sensibly on the board (connectors on edges, decoupling next to power pins), set net classes for power, route the board, and get DRC to zero errors.");
+        MiAiParts.Click += (_, _) => Chat.Submit("For every part that is missing a manufacturer part number or LCSC number, find a suitable in-stock part (prefer JLCPCB basic parts) and fill in mpn, manufacturer, lcsc and datasheet.");
+        MiSettings.Click += async (_, _) => await OpenSettings();
+        MiShortcuts.Click += async (_, _) => await Dialogs.Message(this, "Keyboard shortcuts", Dialogs.Shortcuts);
+        MiAbout.Click += async (_, _) => await Dialogs.Message(this, "About TraceMind",
+            "TraceMind 0.1 — AI-assisted PCB design.\n\nSchematic capture, PCB layout, a grid autorouter, DRC, Gerber/Excellon/BOM/CPL export and KiCad interchange, with Claude as a built-in design engineer.\n\nClaude is a product of Anthropic. You use your own Anthropic API key.");
+        BuildRecentMenu();
+
+        KeyDown += OnWindowKeyDown;
+    }
+
+    void BuildRecentMenu()
+    {
+        var items = settings.RecentFiles.Where(File.Exists).Select(f =>
+        {
+            var mi = new MenuItem { Header = Path.GetFileName(f) + "  —  " + Path.GetDirectoryName(f) };
+            mi.Click += async (_, _) => { if (await ConfirmDiscard()) OpenPath(f); };
+            return (object)mi;
+        }).ToList();
+        if (items.Count == 0) items.Add(new MenuItem { Header = "(none)", IsEnabled = false });
+        MiRecent.ItemsSource = items;
+    }
+
+    void OnWindowKeyDown(object? sender, KeyEventArgs e)
+    {
+        if (e.KeyModifiers == KeyModifiers.Control)
+        {
+            switch (e.Key)
+            {
+                case Key.Z: session.DoUndo(); e.Handled = true; break;
+                case Key.Y: session.DoRedo(); e.Handled = true; break;
+                case Key.S: _ = SaveAsync(false); e.Handled = true; break;
+                case Key.O: _ = OpenAsync(); e.Handled = true; break;
+                case Key.N: MiNew.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); e.Handled = true; break;
+                case Key.R: _ = AutorouteAsync(); e.Handled = true; break;
+                case Key.D: RunDrc(); e.Handled = true; break;
+                case Key.D1: EditorTabs.SelectedIndex = 0; e.Handled = true; break;
+                case Key.D2: EditorTabs.SelectedIndex = 1; e.Handled = true; break;
+            }
+        }
+        else if (e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.S) { _ = SaveAsync(true); e.Handled = true; }
+        else if (e.KeyModifiers == (KeyModifiers.Control | KeyModifiers.Shift) && e.Key == Key.Z) { session.DoRedo(); e.Handled = true; }
+    }
+
+    void WireToolbar()
+    {
+        TbNew.Click += async (_, _) => { if (await ConfirmDiscard()) LoadProject(NewProject(), null); };
+        TbOpen.Click += async (_, _) => await OpenAsync();
+        TbSave.Click += async (_, _) => await SaveAsync(false);
+        TbUndo.Click += (_, _) => session.DoUndo();
+        TbRedo.Click += (_, _) => session.DoRedo();
+        TbSchSelect.Click += (_, _) => Sch.SetTool(SchTool.Select);
+        TbSchWire.Click += (_, _) => Sch.SetTool(SchTool.Wire);
+        TbSchLabel.Click += (_, _) => Sch.SetTool(SchTool.Label);
+        TbSchNc.Click += (_, _) => Sch.SetTool(SchTool.NoConnect);
+        TbPcbSelect.Click += (_, _) => Pcb.SetTool(PcbTool.Select);
+        TbPcbRoute.Click += (_, _) => Pcb.SetTool(PcbTool.Route);
+        TbPcbVia.Click += (_, _) => Pcb.SetTool(PcbTool.Via);
+        TbAutoPlace.Click += (_, _) => AutoPlace(false);
+        TbAutoroute.Click += async (_, _) => await AutorouteAsync();
+        TbDrc.Click += (_, _) => RunDrc();
+        BtnRunDrc.Click += (_, _) => RunDrc();
+        TbExport.Click += async (_, _) => await ExportFabAsync();
+        TbSettings.Click += async (_, _) => await OpenSettings();
+        CbLayer.ItemsSource = new[] { Layer.FCu.Display(), Layer.BCu.Display() };
+        CbLayer.SelectedIndex = 0;
+        CbLayer.SelectionChanged += (_, _) => Pcb.SetLayer(CbLayer.SelectedIndex == 1 ? Layer.BCu : Layer.FCu);
+        var grids = new[] { 0.05, 0.1, 0.125, 0.25, 0.5, 1.0, 1.27, 2.54 };
+        CbGrid.ItemsSource = grids.Select(g => g.ToString("0.###") + " mm").ToList();
+        CbGrid.SelectedIndex = 3;
+        CbGrid.SelectionChanged += (_, _) => { if (CbGrid.SelectedIndex >= 0) Pcb.Grid = grids[CbGrid.SelectedIndex]; Pcb.InvalidateVisual(); };
+        Problems.DoubleTapped += (_, _) => NavigateToProblem();
+    }
+
+    CanvasBase CurrentCanvas => EditorTabs.SelectedIndex == 1 ? Pcb : Sch;
+
+    void OnEditorTabChanged()
+    {
+        bool pcb = EditorTabs.SelectedIndex == 1;
+        SchTools.IsVisible = !pcb; PcbTools.IsVisible = pcb;
+        if (pcb && fitPcbPending) Dispatcher.UIThread.Post(() => { Pcb.ZoomToFit(); fitPcbPending = false; }, DispatcherPriority.Background);
+        if (!pcb && fitSchPending) Dispatcher.UIThread.Post(() => { Sch.ZoomToFit(); fitSchPending = false; }, DispatcherPriority.Background);
+        (pcb ? (Control)Pcb : Sch).Focus();
+    }
+
+    void UpdateTitleAndStats()
+    {
+        var p = session.Project;
+        var name = session.FilePath != null ? Path.GetFileName(session.FilePath) : p.Name;
+        Title = $"{name}{(session.Dirty ? " •" : "")} — TraceMind";
+        int parts = p.Components.Count(c => p.Symbol(c)?.IsPower != true);
+        int unplaced = p.Components.Count(c => !c.Placed && !c.DoNotPopulate && p.Footprint(c) != null && p.Symbol(c)?.IsPower != true);
+        var stats = $"{parts} parts · {session.Netlist.Nets.Count} nets · {session.Connectivity.Airwires.Count} unrouted";
+        if (unplaced > 0) stats += $" · {unplaced} unplaced";
+        if (session.LastDrc is { } d) stats += $" · DRC {d.Errors} errors";
+        StStats.Text = stats;
+    }
+
+    // ======================= files =======================
+
+    static readonly FilePickerFileType TmindType = new("TraceMind project") { Patterns = ["*" + ProjectFile.Extension] };
+
+    async Task<bool> ConfirmDiscard()
+    {
+        if (!session.Dirty) return true;
+        var r = await Dialogs.SaveChanges(this);
+        if (r == null) return false;
+        if (r == true) return await SaveAsync(false);
+        return true;
+    }
+
+    async Task OpenAsync()
+    {
+        if (!await ConfirmDiscard()) return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
+        {
+            Title = "Open project", AllowMultiple = false,
+            FileTypeFilter = [TmindType, new FilePickerFileType("KiCad board / netlist") { Patterns = ["*.kicad_pcb", "*.net"] }],
+        });
+        if (files.Count == 0) return;
+        var path = files[0].TryGetLocalPath();
+        if (path != null) OpenPath(path);
+    }
+
+    async Task<bool> SaveAsync(bool saveAs)
+    {
+        var path = session.FilePath;
+        if (saveAs || path == null)
+        {
+            var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+            {
+                Title = "Save project", DefaultExtension = ProjectFile.Extension, FileTypeChoices = [TmindType],
+                SuggestedFileName = GerberExporter.Sanitize(session.Project.Name) + ProjectFile.Extension,
+            });
+            path = file?.TryGetLocalPath();
+            if (path == null) return false;
+        }
+        try
+        {
+            ProjectFile.Save(session.Project, path);
+            session.MarkSaved(path);
+            settings.AddRecent(path); settings.Save(); BuildRecentMenu();
+            StMessage.Text = "Saved " + path;
+            return true;
+        }
+        catch (Exception ex) { await Dialogs.Message(this, "Save failed", ex.Message); return false; }
+    }
+
+    async Task ImportAsync(string title, string pattern)
+    {
+        if (!await ConfirmDiscard()) return;
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = "Import " + title, FileTypeFilter = [new FilePickerFileType(title) { Patterns = [pattern] }] });
+        var path = files.Count > 0 ? files[0].TryGetLocalPath() : null;
+        if (path == null) return;
+        try
+        {
+            var text = await File.ReadAllTextAsync(path);
+            List<string> warnings;
+            Project p;
+            if (pattern.Contains("kicad_pcb")) { var r = KiCadPcb.Import(text, Path.GetFileNameWithoutExtension(path)); p = r.Project; warnings = r.Warnings; }
+            else { var r = KiCadNetlist.Import(text, Path.GetFileNameWithoutExtension(path)); p = r.Project; warnings = r.Warnings; }
+            LoadProject(p, null);
+            session.MarkChanged();
+            if (pattern.Contains("kicad_pcb")) EditorTabs.SelectedIndex = 1;
+            if (warnings.Count > 0) await Dialogs.Message(this, "Imported with notes", string.Join("\n", warnings.Take(30)));
+        }
+        catch (Exception ex) { await Dialogs.Message(this, "Import failed", ex.Message); }
+    }
+
+    async Task ExportTextAsync(string title, string ext, Func<string> content)
+    {
+        var file = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+        {
+            Title = "Export " + title, DefaultExtension = ext, SuggestedFileName = GerberExporter.Sanitize(session.Project.Name) + ext,
+            FileTypeChoices = [new FilePickerFileType(title) { Patterns = ["*" + ext] }],
+        });
+        var path = file?.TryGetLocalPath();
+        if (path == null) return;
+        try { await File.WriteAllTextAsync(path, content()); StMessage.Text = "Exported " + path; }
+        catch (Exception ex) { await Dialogs.Message(this, "Export failed", ex.Message); }
+    }
+
+    async Task ExportFabAsync()
+    {
+        var drc = Drc.Run(session.Project);
+        session.LastDrc = drc; ShowProblems(drc);
+        if (drc.Errors > 0 && !await Dialogs.Confirm(this, "DRC errors", $"The board has {drc.Summary()}.\nExport anyway?", "Export anyway"))
+            return;
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Choose an output folder for fabrication files" });
+        var dir = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        if (dir == null) return;
+        try
+        {
+            var outDir = Path.Combine(dir, GerberExporter.Sanitize(session.Project.Name) + "-fab");
+            var res = GerberExporter.Export(session.Project, outDir);
+            await Dialogs.Message(this, "Fabrication files exported",
+                $"Wrote {res.Files.Count} files to\n{outDir}\n\nUpload the *-gerbers.zip to your PCB maker (JLCPCB, PCBWay, OSH Park…). For assembly, also upload the BOM and CPL .csv files." +
+                (res.Warnings.Count > 0 ? "\n\nNotes:\n- " + string.Join("\n- ", res.Warnings) : ""));
+            _ = Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(outDir));
+        }
+        catch (Exception ex) { await Dialogs.Message(this, "Export failed", ex.Message); }
+    }
+
+    async void OnClosing(object? sender, WindowClosingEventArgs e)
+    {
+        if (closingConfirmed || !session.Dirty) { agentCts?.Cancel(); return; }
+        e.Cancel = true;
+        if (await ConfirmDiscard()) { closingConfirmed = true; Close(); }
+    }
+
+    // ======================= PCB commands =======================
+
+    void AutoPlace(bool all)
+    {
+        int n = 0;
+        session.Mutate(() => n = AutoPlacer.Place(session.Project, new PlacerOptions { ReplaceAll = all }));
+        StMessage.Text = $"Auto-placed {n} parts.";
+        EditorTabs.SelectedIndex = 1;
+        Pcb.ZoomToFit();
+    }
+
+    async Task AutorouteAsync()
+    {
+        if (routing) return;
+        routing = true;
+        TbAutoroute.IsEnabled = false;
+        EditorTabs.SelectedIndex = 1;
+        try
+        {
+            var clone = ProjectFile.Clone(session.Project);
+            var progress = new Progress<string>(s => StMessage.Text = s);
+            var res = await Task.Run(() => new AutoRouter(clone, new RouterOptions(), progress).Route());
+            session.Mutate(() => { session.Project.Board.Tracks = clone.Board.Tracks; session.Project.Board.Vias = clone.Board.Vias; });
+            RunDrc();
+            StMessage.Text = res.Summary();
+        }
+        catch (Exception ex) { await Dialogs.Message(this, "Autorouter", ex.Message); }
+        finally { routing = false; TbAutoroute.IsEnabled = true; }
+    }
+
+    void RunDrc()
+    {
+        var drc = Drc.Run(session.Project);
+        session.LastDrc = drc;
+        ShowProblems(drc);
+        Pcb.InvalidateVisual();
+        UpdateTitleAndStats();
+        StMessage.Text = "DRC: " + drc.Summary();
+    }
+
+    void ShowProblems(DrcReport drc)
+    {
+        ProblemsTitle.Text = $"Problems — {drc.Summary()}";
+        Problems.ItemsSource = drc.Violations.OrderBy(v => v.Severity).ThenBy(v => v.Code).Select(v => new ListBoxItem
+        {
+            Tag = v, Padding = new Thickness(10, 2),
+            Content = new TextBlock
+            {
+                Text = (v.Severity switch { Severity.Error => "●  ", Severity.Warning => "▲  ", _ => "ℹ  " }) + v.Message,
+                Foreground = v.Severity switch { Severity.Error => Palette.ChatErrorText, Severity.Warning => new Avalonia.Media.SolidColorBrush(Avalonia.Media.Color.Parse("#F0C674")), _ => Palette.Muted },
+            },
+        }).ToList();
+    }
+
+    void NavigateToProblem()
+    {
+        if ((Problems.SelectedItem as ListBoxItem)?.Tag is not DrcViolation v) return;
+        if (v.Code.StartsWith("erc"))
+        {
+            EditorTabs.SelectedIndex = 0;
+            if (v.Location != Vec2.Zero) Sch.CenterOn(v.Location, Math.Max(Sch.Zoom, 10));
+            if (v.Ref != null && session.Project.Find(v.Ref) is { } c) session.Select([c]);
+            return;
+        }
+        EditorTabs.SelectedIndex = 1;
+        if (v.Location != Vec2.Zero) Pcb.CenterOn(v.Location, Math.Max(Pcb.Zoom, 25));
+        else if (v.Ref != null && session.Project.Find(v.Ref) is { } c) session.Select([c]);
+    }
+
+    // ======================= AI =======================
+
+    void WireChat()
+    {
+        Chat.SendRequested += async text =>
+        {
+            Chat.AddUser(text);
+            Chat.SetBusy(true);
+            agentCts = new CancellationTokenSource();
+            var ct = agentCts.Token;
+            await Task.Run(() => agent.SendAsync(text, ct));
+        };
+        Chat.StopRequested += () => agentCts?.Cancel();
+        Chat.NewChatRequested += () => agent.Reset();
+        Chat.SettingsRequested += async () => await OpenSettings();
+        Chat.BuildRequested += async () => await BuildBoardAsync();
+    }
+
+    async Task BuildBoardAsync()
+    {
+        var desc = await Dialogs.Prompt(this, "Build a board",
+            "Describe the board you want. Include what it does, how it's powered, connectors, size limits, and whether you want JLCPCB assembly.\n\nExample: \"ESP32-C3 sensor board, USB-C powered, BME280 over I2C, status LED, reset + boot buttons, max 40x30 mm, JLCPCB assembly\"");
+        if (string.IsNullOrWhiteSpace(desc)) return;
+        if (session.Project.Components.Count > 0 &&
+            await Dialogs.Confirm(this, "Build a board", "Start from a new empty project? (Choose 'Keep' to build into the current design.)", "New project", "Keep"))
+        {
+            if (!await ConfirmDiscard()) return;
+            LoadProject(NewProject(), null);
+        }
+        Chat.Submit($"""
+            Build this board end to end: {desc.Trim()}
+
+            Work through every step without stopping unless a key requirement is genuinely missing:
+            1. Research and choose real parts (prefer JLCPCB basic/extended parts; record MPN, manufacturer, LCSC number, datasheet).
+            2. Build the complete schematic, including every support part the datasheets call for (decoupling, pull-ups, protection, programming/boot access). Mark unused pins no-connect.
+            3. Size the board, set design rules and net classes for power.
+            4. Place parts thoughtfully (connectors on edges, decoupling at the pins), then auto-place the rest.
+            5. Route the board and add a GND pour; iterate until routing completes.
+            6. Run DRC and fix all errors.
+            7. Finish with a short summary: what the board does, the BOM with part numbers, and anything I should double-check before ordering.
+            """);
+    }
+
+    async Task OpenSettings()
+    {
+        if (await Dialogs.Settings(this, settings)) UpdateModelLabel();
+    }
+
+    void UpdateModelLabel() => Chat.SetModelLabel($"{settings.Model} · {settings.Effort}" + (string.IsNullOrWhiteSpace(settings.ApiKey) ? " · no API key" : ""));
+
+    void OnAgentEvent(AgentEvent e)
+    {
+        Chat.Handle(e);
+        if (e.Kind == AgentEventKind.Done) { UpdateTitleAndStats(); }
+    }
+
+    /// <summary>Execute an AI tool call against the open design (UI thread), with undo support.</summary>
+    async Task<string> RunToolAsync(string name, JsonElement input)
+    {
+        if (name == "autoroute")
+        {
+            // Route on a copy in the background so the UI stays responsive, then apply.
+            var clone = await Dispatcher.UIThread.InvokeAsync(() => ProjectFile.Clone(session.Project));
+            var cloneTools = new DesignTools(() => clone)
+            {
+                Progress = new Progress<string>(s => Dispatcher.UIThread.Post(() => { StMessage.Text = s; Chat.SetStatus(s); })),
+                Cancellation = agentCts?.Token ?? default,
+            };
+            var result = await Task.Run(() => cloneTools.Execute(name, input));
+            await Dispatcher.UIThread.InvokeAsync(() =>
+            {
+                session.Mutate(() => { session.Project.Board.Tracks = clone.Board.Tracks; session.Project.Board.Vias = clone.Board.Vias; });
+                if (EditorTabs.SelectedIndex != 1) EditorTabs.SelectedIndex = 1;
+                session.LastDrc = Drc.Run(session.Project);
+                ShowProblems(session.LastDrc);
+            });
+            return result;
+        }
+        return await Dispatcher.UIThread.InvokeAsync(() =>
+        {
+            bool readOnly = DesignTools.IsReadOnly(name);
+            if (!readOnly) session.PushUndo();
+            var result = tools.Execute(name, input);
+            if (name == "run_drc") { session.LastDrc = Drc.Run(session.Project); ShowProblems(session.LastDrc); Pcb.InvalidateVisual(); }
+            if (!readOnly)
+            {
+                session.MarkChanged();
+                // Follow along: show the editor that the tool affects.
+                if (name is "add_component" or "connect" or "tidy_schematic" or "mark_no_connect") { if (EditorTabs.SelectedIndex != 0) EditorTabs.SelectedIndex = 0; Sch.ZoomToFit(); }
+                else if (name is "place_components" or "auto_place" or "set_board" or "add_copper_pour" or "add_mounting_holes") { if (EditorTabs.SelectedIndex != 1) EditorTabs.SelectedIndex = 1; Pcb.ZoomToFit(); }
+            }
+            return result;
+        });
+    }
+}

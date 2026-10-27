@@ -1,0 +1,50 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="TraceMind.App.App"
+             RequestedThemeVariant="Dark">
+  <Application.Styles>
+    <FluentTheme>
+      <FluentTheme.Palettes>
+        <ColorPaletteResources x:Key="Dark" Accent="#2FBF85" RegionColor="#15171C" AltHigh="#0F1115" BaseLow="#262A33" ChromeLow="#1A1D23" ChromeMedium="#1F232A" ChromeMediumLow="#1C1F25" ChromeHigh="#2E333C" />
+      </FluentTheme.Palettes>
+    </FluentTheme>
+    <Style Selector="Window">
+      <Setter Property="Background" Value="#111318" />
+      <Setter Property="FontSize" Value="13" />
+    </Style>
+    <Style Selector="Button.tool">
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Margin" Value="1,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="ToggleButton.tool">
+      <Setter Property="Padding" Value="8,4" />
+      <Setter Property="Margin" Value="1,0" />
+      <Setter Property="Background" Value="Transparent" />
+      <Setter Property="FontSize" Value="12.5" />
+    </Style>
+    <Style Selector="ToggleButton.tool:checked /template/ ContentPresenter">
+      <Setter Property="Background" Value="#1F4D3A" />
+    </Style>
+    <Style Selector="TextBlock.section">
+      <Setter Property="FontWeight" Value="SemiBold" />
+      <Setter Property="Foreground" Value="#9FB0C4" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="Margin" Value="0,10,0,4" />
+    </Style>
+    <Style Selector="TextBlock.hint">
+      <Setter Property="Foreground" Value="#7D8796" />
+      <Setter Property="FontSize" Value="11.5" />
+      <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+    <Style Selector="Border.panel">
+      <Setter Property="Background" Value="#15171C" />
+    </Style>
+    <Style Selector="TabItem">
+      <Setter Property="FontSize" Value="13.5" />
+      <Setter Property="MinHeight" Value="34" />
+      <Setter Property="Padding" Value="12,0" />
+    </Style>
+  </Application.Styles>
+</Application>
