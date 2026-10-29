@@ -117,6 +117,12 @@ public static class ProjectGeometry
         return r;
     }
 
+    /// <summary>Short, human/AI friendly id for a track or via (first 6 hex digits of its GUID).</summary>
+    public static string ShortId(Guid id) => id.ToString("N")[..6];
+
+    /// <summary>Wire links (jumpers) are parts whose pads are joined by a wire above the board.</summary>
+    public static bool IsWireLink(this Component c) => c.Fields.ContainsKey("WireLink") || c.SymbolId == "Jumper";
+
     public static Shape TrackShape(Track t) => Shape.Capsule(t.A, t.B, t.Width / 2);
     public static Shape ViaShape(Via v) => Shape.Circle(v.Position, v.Diameter / 2);
 

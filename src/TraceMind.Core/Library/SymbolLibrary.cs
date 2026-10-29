@@ -18,7 +18,7 @@ public static class SymbolLibrary
         ("SW", "Push button (2 pins)"), ("Crystal", "Crystal (2 pins)"), ("Fuse", "Fuse / polyfuse"),
         ("GND", "Ground power symbol — value is the net name"), ("VCC", "Supply power symbol — value is the net name, e.g. +3V3"),
         ("Conn_1xN", "Single-row connector, e.g. Conn_1x04"), ("Conn_2xN", "Dual-row connector, e.g. Conn_2x05"),
-        ("TestPoint", "Test point (1 pin)"), ("MountingHole", "Mounting hole (no pins)"),
+        ("TestPoint", "Test point (1 pin)"), ("Jumper", "Wire link / jumper (2 pins, same net) — footprint WireLink_P7.62 / P10.16 / P12.7"), ("MountingHole", "Mounting hole (no pins)"),
     ];
 
     public static SymbolDef? Get(string id)
@@ -31,7 +31,7 @@ public static class SymbolLibrary
             "D" => Diode("D", "Diode", 0), "D_Schottky" => Diode("D_Schottky", "Schottky diode", 1), "D_Zener" => Diode("D_Zener", "Zener diode", 2),
             "LED" => Led(), "Q_NPN" => Bjt(true), "Q_PNP" => Bjt(false), "Q_NMOS" => Mosfet(true), "Q_PMOS" => Mosfet(false),
             "SW" => Switch(), "Crystal" => Crystal(), "Fuse" => Fuse(), "GND" => Gnd(), "VCC" => Vcc(),
-            "TestPoint" => TestPoint(), "MountingHole" => new SymbolDef { Id = "MountingHole", Name = "Mounting hole", RefPrefix = "H", Graphics = [Graphic.CircleG(Vec2.Zero, 1.27)] },
+            "TestPoint" => TestPoint(), "Jumper" => Jumper(), "MountingHole" => new SymbolDef { Id = "MountingHole", Name = "Mounting hole", RefPrefix = "H", Graphics = [Graphic.CircleG(Vec2.Zero, 1.27)] },
             _ => null,
         };
     }
@@ -41,7 +41,7 @@ public static class SymbolLibrary
         "R" => "R_0603", "C" => "C_0603", "C_Pol" => "CP_Radial_D5.0_P2.00", "L" => "L_0805",
         "D" or "D_Schottky" or "D_Zener" => "D_SOD-123", "LED" => "LED_0603",
         "Q_NPN" or "Q_PNP" or "Q_NMOS" or "Q_PMOS" => "SOT-23", "SW" => "SW_Tactile_6x6", "Crystal" => "Crystal_HC49-4H",
-        "Fuse" => "R_1206", "TestPoint" => "TestPoint_Pad_D1.5", "MountingHole" => "MountingHole_3.2mm",
+        "Fuse" => "R_1206", "Jumper" => "WireLink_P10.16", "TestPoint" => "TestPoint_Pad_D1.5", "MountingHole" => "MountingHole_3.2mm",
         _ when symbolId.StartsWith("Conn_1x") => "PinHeader_1x" + symbolId[7..].PadLeft(2, '0') + "_P2.54",
         _ when symbolId.StartsWith("Conn_2x") => "PinHeader_2x" + symbolId[7..].PadLeft(2, '0') + "_P2.54",
         _ => "",
@@ -204,6 +204,20 @@ public static class SymbolLibrary
         Graphics = [Graphic.Line(new(0, 0), new(0, -1.27)), Graphic.Line(new(-1.27, -1.27), new(1.27, -1.27))],
         RefTextPos = new(0, -6), ValueTextPos = new(0, -2.6),
     };
+
+    static SymbolDef Jumper()
+    {
+        var s = new SymbolDef
+        {
+            Id = "Jumper", Name = "Wire link", RefPrefix = "W", HidePinNames = true, HidePinNumbers = true,
+            Pins = [Pin("1", -3.81, 0, PinSide.Left, 1.778), Pin("2", 3.81, 0, PinSide.Right, 1.778)],
+            RefTextPos = new(0, -2.2), ValueTextPos = new(0, 2.4),
+        };
+        s.Graphics.Add(Graphic.CircleG(new(-1.778, 0), 0.4));
+        s.Graphics.Add(Graphic.CircleG(new(1.778, 0), 0.4));
+        s.Graphics.Add(Graphic.ArcG(new(0, 0.2), 1.75, 190, 350));
+        return s;
+    }
 
     static SymbolDef TestPoint() => new()
     {

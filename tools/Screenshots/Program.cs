@@ -63,3 +63,34 @@ Shot(w, "06-chat.png");
 w.ShowEditor(0);
 w.SchematicView.ZoomToFit();
 Shot(w, "07-schematic-after.png");
+
+// ---- v0.3: single-sided board, wire links, AI board image ----
+{
+    var p = new TraceMind.Core.Model.Project { Name = "Single-sided demo" };
+    p.Board.Outline = [new(0, 0), new(40, 0), new(40, 25), new(0, 25)];
+    p.Board.CopperLayers = 1;
+    var ic = TraceMind.Core.Model.EditOps.AddComponent(p, "Conn_2x04", "U1", "DIP-8", "U1"); ic.PcbPos = new(20, 12.5); ic.Placed = true;
+    var j1 = TraceMind.Core.Model.EditOps.AddComponent(p, "Conn_1x04", "IN", "PinHeader_1x04_P2.54", "J1"); j1.PcbPos = new(4, 12.5); j1.Placed = true;
+    var j2 = TraceMind.Core.Model.EditOps.AddComponent(p, "Conn_1x04", "OUT", "PinHeader_1x04_P2.54", "J2"); j2.PcbPos = new(36, 12.5); j2.Placed = true;
+    TraceMind.Core.Model.EditOps.ConnectPins(p, "A", [("J1", "1"), ("U1", "8"), ("J2", "4")]);
+    TraceMind.Core.Model.EditOps.ConnectPins(p, "B", [("J1", "4"), ("U1", "1"), ("J2", "1")]);
+    TraceMind.Core.Model.EditOps.ConnectPins(p, "C", [("J1", "2"), ("U1", "5")]);
+    TraceMind.Core.Model.EditOps.ConnectPins(p, "D", [("J2", "3"), ("U1", "4")]);
+    p.Board.Holes.Add(new TraceMind.Core.Model.MountingHole { Position = new(3, 3), Diameter = 3.2 });
+    w.LoadForAutomation(p);
+    Pump();
+    var r1 = w.RunToolForAutomation("autoroute", "{\"wire_links\":true}");
+    while (!r1.IsCompleted) Pump(50);
+    Console.WriteLine("autoroute: " + r1.Result[..Math.Min(400, r1.Result.Length)]);
+    w.ShowEditor(1); w.PcbView.ZoomToFit();
+    Shot(w, "08-single-sided-wirelinks.png");
+    var r2 = w.RunToolForAutomation("get_board", "{\"image\":true,\"include_pads\":false}");
+    while (!r2.IsCompleted) Pump(50);
+    var node = System.Text.Json.Nodes.JsonNode.Parse(r2.Result)!;
+    var b64 = node["data"]?["__image_png"]?.GetValue<string>();
+    Console.WriteLine("board image bytes: " + (b64 == null ? 0 : Convert.FromBase64String(b64).Length));
+    if (b64 != null) File.WriteAllBytes(Path.Combine(outDir, "09-ai-board-image.png"), Convert.FromBase64String(b64));
+    var r3 = w.RunToolForAutomation("move_mounting_hole", "{\"reference\":\"H1\",\"x\":37,\"y\":22}");
+    while (!r3.IsCompleted) Pump(50);
+    Console.WriteLine("move hole: " + r3.Result);
+}

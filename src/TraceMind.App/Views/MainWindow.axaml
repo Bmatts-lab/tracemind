@@ -25,7 +25,9 @@
         </MenuItem>
         <MenuItem Header="_Export">
           <MenuItem Header="Fabrication outputs (Gerber, drill, BOM, CPL)…" x:Name="MiExportFab" />
+          <MenuItem Header="CNC milling files (copper, outline, drill — optional mirror)…" x:Name="MiExportCnc" />
           <MenuItem Header="KiCad board (.kicad_pcb)…" x:Name="MiExportPcb" />
+          <MenuItem Header="Save back to the imported KiCad file" x:Name="MiSaveKiCad" />
           <MenuItem Header="KiCad netlist (.net)…" x:Name="MiExportNet" />
           <MenuItem Header="BOM (.csv)…" x:Name="MiExportBom" />
         </MenuItem>
@@ -53,6 +55,7 @@
         <MenuItem Header="Auto-_place unplaced parts" x:Name="MiAutoPlace" />
         <MenuItem Header="Auto-place _all (unlocked)" x:Name="MiAutoPlaceAll" />
         <MenuItem Header="_Autoroute" x:Name="MiAutoroute" InputGesture="Ctrl+R" />
+        <MenuItem Header="Autoroute with _wire links (single-sided boards)" x:Name="MiAutorouteLinks" />
         <MenuItem Header="_Clear routing" x:Name="MiClearRouting" />
         <MenuItem Header="Add _GND pour (bottom)" x:Name="MiGndPour" />
         <MenuItem Header="Add _mounting holes" x:Name="MiHoles" />

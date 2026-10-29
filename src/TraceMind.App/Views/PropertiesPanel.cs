@@ -166,7 +166,12 @@ public sealed class PropertiesPanel : UserControl
         var mtw = Cell("Min track", F(r.MinTrackWidth), 0); var ec = Cell("Edge clearance", F(r.EdgeClearance), 2); row += 2;
         stack.Children.Add(Section("SIZE AND RULES"));
         stack.Children.Add(grid);
-        var layers = new ComboBox { ItemsSource = new[] { "2 layers", "4 layers" }, SelectedIndex = b.CopperLayers >= 4 ? 1 : 0, HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 8, 0, 0) };
+        var layers = new ComboBox
+        {
+            ItemsSource = new[] { "1 layer — copper on bottom (CNC / single-sided)", "1 layer — copper on top", "2 layers", "4 layers" },
+            SelectedIndex = b.CopperLayers <= 1 ? (b.SingleSideLayer == Layer.FCu ? 1 : 0) : b.CopperLayers >= 4 ? 3 : 2,
+            HorizontalAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 8, 0, 0),
+        };
         stack.Children.Add(layers);
         bool rectangular = b.Outline.Count == 4;
         if (!rectangular) stack.Children.Add(new TextBlock { Text = "Custom outline — changing width/height replaces it with a rectangle.", Classes = { "hint" } });
@@ -189,7 +194,14 @@ public sealed class PropertiesPanel : UserControl
             r.Clearance = ParseD(clr.Text, r.Clearance); r.TrackWidth = ParseD(tw.Text, r.TrackWidth);
             r.ViaDiameter = ParseD(vd.Text, r.ViaDiameter); r.ViaDrill = ParseD(vdr.Text, r.ViaDrill);
             r.MinTrackWidth = ParseD(mtw.Text, r.MinTrackWidth); r.EdgeClearance = ParseD(ec.Text, r.EdgeClearance);
-            b.CopperLayers = layers.SelectedIndex == 1 ? 4 : 2;
+            b.CopperLayers = layers.SelectedIndex switch { 0 or 1 => 1, 3 => 4, _ => 2 };
+            if (b.CopperLayers == 1)
+            {
+                b.SingleSideLayer = layers.SelectedIndex == 1 ? Layer.FCu : Layer.BCu;
+                foreach (var t in b.Tracks) t.Layer = b.SingleSideLayer;
+                foreach (var z in b.Zones) z.Layer = b.SingleSideLayer;
+                b.Vias.Clear();
+            }
             r.NetClasses.Clear();
             foreach (var line in (classes.Text ?? "").Split('\n', StringSplitOptions.RemoveEmptyEntries))
             {

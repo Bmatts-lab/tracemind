@@ -81,7 +81,18 @@ public sealed class ClaudeAgent : IDesignAgent
         - Footprints: prefer the built-in parametric ones (list_library). If the package isn't covered, build it with define_footprint
           from the datasheet's recommended land pattern — never guess pad geometry you have not looked up.
         - The autorouter is a grid maze router you steer: net classes (power widths), routing order, skipped nets (e.g. GND when a pour
-          connects it), per-net layers and via cost. After routing, read failures and DRC, then fix placement/rules and route again.
+          connects it), per-net layers and via cost. Tracks keep their class width where there is room and neck down in tight spots
+          (`neck_down` sets each net's minimum). When a net fails, the result lists where it is blocked (`failures[].crossings`: the
+          blocking track/pad and entry/exit coordinates) — fix exactly there instead of guessing.
+        - You can draw copper yourself: get_board shows every track (with ids), pad, via, hole and unrouted connection, optionally as an
+          image (use it to look before and after you edit). draw_track places a polyline on a layer/net (width per segment),
+          update_track / delete_tracks / set_track_width edit existing copper, add_via adds vias. Each reports clearance problems.
+        - Single-sided boards (set_board layers=1, e.g. CNC-milled): there are no vias. Where nets must cross, use a wire link
+          (add_wire_link, or autoroute with wire_links=true which inserts them at the blocking crossings: two 2.0 mm pads, 1.0 mm
+          drill, 0.3/0.4/0.5" spacing). Keep links few: try re-ordering nets or nudging parts first.
+        - Mounting holes have references (H1, H2…): add_mounting_hole / move_mounting_hole / delete_mounting_hole.
+        - export_fab writes Gerbers + Excellon drill (mm) on one origin; mode "cnc" with origin "lower_left" and mirror_bottom for milling.
+          save_kicad writes the board back to KiCad (.kicad_pcb, readable by KiCad 7–9).
 
         How to work
         - Start by calling get_design to see the current state; don't assume.
@@ -224,7 +235,13 @@ public sealed class ClaudeAgent : IDesignAgent
                     catch (Exception ex) { result = JsonSerializer.Serialize(new { ok = false, error = ex.Message }); }
                     bool isError = result.StartsWith("{\"ok\":false");
                     OnEvent?.Invoke(new(AgentEventKind.ToolResult, tu.Name, ResultSummary(result)));
-                    results.Add(new BetaToolResultBlockParam { ToolUseID = tu.ID, Content = result, IsError = isError });
+                    var (text, png) = SplitImage(result);
+                    if (png == null) results.Add(new BetaToolResultBlockParam { ToolUseID = tu.ID, Content = text, IsError = isError });
+                    else
+                    {
+                        List<Block> blocks = [new BetaTextBlockParam { Text = text }, new BetaImageBlockParam { Source = new BetaBase64ImageSource { Data = png, MediaType = MediaType.ImagePng } }];
+                        results.Add(new BetaToolResultBlockParam { ToolUseID = tu.ID, Content = blocks, IsError = isError });
+                    }
                 }
                 history.Add(new BetaUserMessageParam { Content = results });
             }
@@ -263,6 +280,21 @@ public sealed class ClaudeAgent : IDesignAgent
             if (assistantWithTools || userText) { history.RemoveAt(history.Count - 1); continue; }
             break;
         }
+    }
+
+    /// <summary>Tools return images as a base64 "__image_png" field; split it out so it can be sent as an image block.</summary>
+    internal static (string Text, string? Png) SplitImage(string result)
+    {
+        if (!result.Contains("\"__image_png\"")) return (result, null);
+        try
+        {
+            var node = System.Text.Json.Nodes.JsonNode.Parse(result)!;
+            var data = node["data"];
+            var png = data?["__image_png"]?.GetValue<string>();
+            data?.AsObject().Remove("__image_png");
+            return (node.ToJsonString(), png);
+        }
+        catch { return (result, null); }
     }
 
     static BetaContentBlockParam PassThrough(BetaContentBlock block)

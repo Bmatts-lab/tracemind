@@ -10,7 +10,11 @@ namespace TraceMind.Core.KiCad;
 /// <summary>Read / write KiCad 7/8 .kicad_pcb board files.</summary>
 public static partial class KiCadPcb
 {
-    static SNode Uuid() => L("uuid", Guid.NewGuid().ToString());
+    // KiCad 7 format (20221018): readable by KiCad 7, 8 and 9.
+    static SNode Uuid() => L("tstamp", Guid.NewGuid().ToString());
+    static SNode FpText(string kind, string text, SNode at, string layer, bool mirror, bool hide = false) =>
+        L("fp_text", Sym(kind), text, at, Layer(layer), hide ? Sym("hide") : null,
+          L("effects", L("font", L("size", 1.0, 1.0), L("thickness", 0.15)), mirror ? L("justify", Sym("mirror")) : null), Uuid());
     static SNode At(Vec2 p, double rot = double.NaN) => double.IsNaN(rot) || rot == 0 ? L("at", p.X, p.Y) : L("at", p.X, p.Y, rot);
     static SNode XY(string head, Vec2 p) => L(head, p.X, p.Y);
     static SNode Stroke(double w) => L("stroke", L("width", w), L("type", Sym("solid")));
@@ -32,8 +36,8 @@ public static partial class KiCadPcb
         var root = new List<SNode>
         {
             Sym("kicad_pcb"),
-            L("version", Sym("20240108")), L("generator", "tracemind"), L("generator_version", "1.0"),
-            L("general", L("thickness", board.Thickness), L("legacy_teardrops", Sym("no"))),
+            L("version", Sym("20221018")), L("generator", Sym("pcbnew")),
+            L("general", L("thickness", board.Thickness)),
             L("paper", "A4"),
             L("layers",
                 L("0", "F.Cu", Sym("signal")),
@@ -58,12 +62,12 @@ public static partial class KiCadPcb
             var items = new List<SNode>
             {
                 Layer(side + ".Cu"), Uuid(), At(c.PcbPos, NormRot(c.PcbRot)),
-                L("property", "Reference", c.Ref, At(new(0, fp.Courtyard.MinY - 0.8), NormRot(c.PcbRot)), Layer(side + ".SilkS"), Uuid(), L("effects", L("font", L("size", 1.0, 1.0), L("thickness", 0.15)), c.OnBottom ? L("justify", Sym("mirror")) : null)),
-                L("property", "Value", c.Value, At(new(0, fp.Courtyard.MaxY + 0.8), NormRot(c.PcbRot)), Layer(side + ".Fab"), Uuid(), L("effects", L("font", L("size", 1.0, 1.0), L("thickness", 0.15)), c.OnBottom ? L("justify", Sym("mirror")) : null)),
+                FpText("reference", c.Ref, At(new(0, fp.Courtyard.MinY - 0.8), NormRot(c.PcbRot)), side + ".SilkS", c.OnBottom),
+                FpText("value", c.Value, At(new(0, fp.Courtyard.MaxY + 0.8), NormRot(c.PcbRot)), side + ".Fab", c.OnBottom),
             };
-            if (!string.IsNullOrEmpty(c.Datasheet)) items.Add(L("property", "Datasheet", c.Datasheet, At(Vec2.Zero), Layer(side + ".Fab"), L("hide", Sym("yes")), Uuid()));
-            if (!string.IsNullOrEmpty(c.Mpn)) items.Add(L("property", "MPN", c.Mpn, At(Vec2.Zero), Layer(side + ".Fab"), L("hide", Sym("yes")), Uuid()));
-            if (!string.IsNullOrEmpty(c.SupplierPart)) items.Add(L("property", "LCSC", c.SupplierPart, At(Vec2.Zero), Layer(side + ".Fab"), L("hide", Sym("yes")), Uuid()));
+            if (!string.IsNullOrEmpty(c.Datasheet)) items.Add(L("property", "Datasheet", c.Datasheet));
+            if (!string.IsNullOrEmpty(c.Mpn)) items.Add(L("property", "MPN", c.Mpn));
+            if (!string.IsNullOrEmpty(c.SupplierPart)) items.Add(L("property", "LCSC", c.SupplierPart));
             if (c.FootprintId.StartsWith("MountingHole")) items.Add(L("attr", Sym("exclude_from_pos_files"), Sym("exclude_from_bom")));
             else items.Add(L("attr", Sym(fp.Pads.All(p => p.IsThrough) ? "through_hole" : "smd")));
 
@@ -105,7 +109,8 @@ public static partial class KiCadPcb
                 L("polygon", new SNode(new[] { Sym("pts") }.Concat(z.Outline.Select(p => XY("xy", p)))))));
         foreach (var h in board.Holes)
             root.Add(L("footprint", "TraceMind:MountingHole", Layer("F.Cu"), Uuid(), At(h.Position),
-                L("property", "Reference", "H", At(Vec2.Zero), Layer("F.SilkS"), L("hide", Sym("yes")), Uuid()),
+                FpText("reference", string.IsNullOrEmpty(h.Ref) ? "H" : h.Ref, At(Vec2.Zero), "F.SilkS", false, hide: true),
+                FpText("value", "MountingHole", At(Vec2.Zero), "F.Fab", false, hide: true),
                 L("attr", Sym("exclude_from_pos_files"), Sym("exclude_from_bom")),
                 L("pad", "", Sym("np_thru_hole"), Sym("circle"), At(Vec2.Zero), L("size", h.Diameter, h.Diameter), L("drill", h.Diameter), L("layers", "*.Cu", "*.Mask"), Uuid())));
         return new SNode(root).ToString() + "\n";
@@ -169,7 +174,8 @@ public static partial class KiCadPcb
             if (libName == "TraceMind:MountingHole")
             {
                 var hp = fpn.First("pad");
-                board.Holes.Add(new MountingHole { Position = pos, Diameter = hp?.First("drill")?.Num(1, 3.2) ?? 3.2 });
+                var href = fpn.All("fp_text").FirstOrDefault(t => t.Str(1) == "reference")?.Str(2) ?? fpn.All("property").FirstOrDefault(t => t.Str(1) == "Reference")?.Str(2) ?? "";
+                board.Holes.Add(new MountingHole { Position = pos, Diameter = hp?.First("drill")?.Num(1, 3.2) ?? 3.2, Ref = href == "H" ? "" : href });
                 continue;
             }
             bool bottom = (fpn.Get("layer") ?? "F.Cu").StartsWith("B.");
@@ -399,6 +405,14 @@ public static partial class KiCadPcb
             "SW_Tactile_6x6" => "Button_Switch_THT:SW_PUSH_6mm", "Crystal_HC49-4H" => "Crystal:Crystal_HC49-4H_Vertical",
             "MountingHole_3.2mm" => "MountingHole:MountingHole_3.2mm_M3", _ => "TraceMind:" + id,
         };
+    }
+
+    /// <summary>Write the project back to a .kicad_pcb, keeping a .bak of the existing file.</summary>
+    public static string SaveTo(Project project, string path)
+    {
+        if (File.Exists(path)) File.Copy(path, path + ".bak", overwrite: true);
+        File.WriteAllText(path, Export(project));
+        return path;
     }
 
     /// <summary>Map a KiCad library footprint name to a TraceMind parametric footprint id (best effort).</summary>

@@ -73,7 +73,9 @@ public sealed partial class DesignTools(Func<Project> getProject)
             """
               {"type":"object","properties":{"width":{"type":"number"},"height":{"type":"number"},"corner_radius":{"type":"number"},
               "outline":{"type":"array","items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2}},
-              "layers":{"type":"integer","enum":[2,4]},"thickness":{"type":"number"}}}
+              "layers":{"type":"integer","enum":[1,2,4],"description":"1 = single-sided board (e.g. CNC-milled)"},
+              "copper_side":{"type":"string","enum":["top","bottom"],"description":"For 1-layer boards: which side has copper (default bottom)."},
+              "thickness":{"type":"number"}}}
             """),
         new("set_design_rules", "Set manufacturing rules and net classes (e.g. wide tracks for power nets). Values in mm. Typical JLCPCB minimums: clearance 0.127, track 0.127, via 0.45/0.25.",
             """
@@ -98,14 +100,65 @@ public sealed partial class DesignTools(Func<Project> getProject)
               "net_layers":{"type":"object","additionalProperties":{"type":"string","enum":["top","bottom"]}},
               "via_cost":{"type":"number","description":"mm-equivalent cost of a via (default 4)."},
               "grid":{"type":"number","description":"Routing grid in mm (default automatic)."},
-              "passes":{"type":"integer"},"keep_existing":{"type":"boolean","description":"Keep previously auto-routed tracks."}}}
+              "passes":{"type":"integer"},"keep_existing":{"type":"boolean","description":"Keep previously auto-routed tracks."},
+              "wire_links":{"type":"boolean","description":"Single-layer boards: when a net is blocked, insert a wire link (jumper, 2 THT pads, 1.0 mm drill) across the blocking track and continue."},
+              "link_spacings":{"type":"array","items":{"type":"number"},"description":"Allowed wire-link pad spacings in mm (default 7.62, 10.16, 12.7)."},
+              "neck_down":{"type":"object","additionalProperties":{"type":"number"},"description":"Per-net minimum width: the net uses its class width where there is room and narrows to this in tight spots, e.g. {\"+5V\":0.5}. Default: down to the default track width."},
+              "allow_neck_down":{"type":"boolean","description":"Default true."}}}
             """),
         new("clear_routing", "Remove tracks and vias (all, or only for some nets).",
             """{"type":"object","properties":{"nets":{"type":"array","items":{"type":"string"}},"only_auto":{"type":"boolean"}}}"""),
         new("add_copper_pour", "Add a copper pour (e.g. a GND plane) covering the board on a layer.",
             """{"type":"object","properties":{"net":{"type":"string"},"layer":{"type":"string","enum":["top","bottom"]},"clearance":{"type":"number"}},"required":["net","layer"]}"""),
-        new("add_mounting_holes", "Add mounting holes in the board corners.",
-            """{"type":"object","properties":{"diameter":{"type":"number"},"inset":{"type":"number"}}}"""),
+        new("add_mounting_holes", "Add four mounting holes in the board corners (replaces existing holes unless replace=false).",
+            """{"type":"object","properties":{"diameter":{"type":"number"},"inset":{"type":"number"},"replace":{"type":"boolean"}}}"""),
+        new("add_mounting_hole", "Add one mounting hole (non-plated) at a position.",
+            """{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"diameter":{"type":"number"},"reference":{"type":"string"}},"required":["x","y"]}"""),
+        new("move_mounting_hole", "Move and/or resize one mounting hole by reference (H1, H2…; see get_design / get_board).",
+            """{"type":"object","properties":{"reference":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"diameter":{"type":"number"}},"required":["reference"]}"""),
+        new("delete_mounting_hole", "Delete mounting holes by reference.",
+            """{"type":"object","properties":{"references":{"type":"array","items":{"type":"string"}}},"required":["references"]}"""),
+        new("get_board", "See the PCB: outline, every track (id, net, layer, width, points), via, pad (ref.pad, net, position, size, drill), mounting hole and unrouted connection. Optionally limit to a region, and/or get a rendered image of the board (with a mm ruler) to look at.",
+            """
+              {"type":"object","properties":{"region":{"type":"object","properties":{"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"}}},
+              "include_pads":{"type":"boolean","description":"Default true."},
+              "image":{"type":"boolean","description":"Also return a rendered PNG of the board (or region)."}}}
+            """),
+        new("draw_track", "Draw a track by hand as a polyline of points on one layer and net. Width is per segment: give `width` for all, or `widths` (one per segment). Returns the new track ids and any clearance problems.",
+            """
+              {"type":"object","properties":{"net":{"type":"string"},"layer":{"type":"string","enum":["top","bottom","in1","in2"]},
+              "points":{"type":"array","minItems":2,"items":{"type":"array","items":{"type":"number"},"minItems":2,"maxItems":2},"description":"[[x,y],[x,y],…] in mm"},
+              "width":{"type":"number"},"widths":{"type":"array","items":{"type":"number"}},"lock":{"type":"boolean","description":"Protect from the autorouter's rip-up (default true)."}},
+              "required":["net","points"]}
+            """),
+        new("update_track", "Move a track segment's end points, or change its width / layer / net.",
+            """{"type":"object","properties":{"id":{"type":"string"},"start":{"type":"array","items":{"type":"number"}},"end":{"type":"array","items":{"type":"number"}},"width":{"type":"number"},"layer":{"type":"string","enum":["top","bottom","in1","in2"]},"net":{"type":"string"}},"required":["id"]}"""),
+        new("delete_tracks", "Delete tracks and/or vias by id, or all copper of a net / layer / inside a circle.",
+            """
+              {"type":"object","properties":{"ids":{"type":"array","items":{"type":"string"}},"net":{"type":"string"},"layer":{"type":"string","enum":["top","bottom","in1","in2"]},
+              "near":{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"radius":{"type":"number"}}},"include_locked":{"type":"boolean"}}}
+            """),
+        new("set_track_width", "Change the width of existing track segments (by id, or a whole net, optionally only inside a rectangle). Reports clearance problems so you can keep tight spots narrow.",
+            """
+              {"type":"object","properties":{"width":{"type":"number"},"ids":{"type":"array","items":{"type":"string"}},"net":{"type":"string"},
+              "region":{"type":"object","properties":{"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"}}},
+              "only_where_clear":{"type":"boolean","description":"Skip segments that would violate clearance at the new width (default true)."}},"required":["width"]}
+            """),
+        new("add_via", "Place a via (multi-layer boards).",
+            """{"type":"object","properties":{"x":{"type":"number"},"y":{"type":"number"},"net":{"type":"string"},"diameter":{"type":"number"},"drill":{"type":"number"}},"required":["x","y","net"]}"""),
+        new("add_wire_link", "Place a wire link (jumper: two THT pads 2.0 mm, 1.0 mm drill, joined by a wire on the component side) to hop a net over other copper. Give the two pad positions, or a centre + angle + spacing (7.62 / 10.16 / 12.7 mm).",
+            """
+              {"type":"object","properties":{"net":{"type":"string"},"x1":{"type":"number"},"y1":{"type":"number"},"x2":{"type":"number"},"y2":{"type":"number"},
+              "x":{"type":"number"},"y":{"type":"number"},"angle":{"type":"number","description":"Degrees, 0 = along +x"},"spacing":{"type":"number"}},"required":["net"]}
+            """),
+        new("save_kicad", "Save the board as a KiCad .kicad_pcb (and optionally a KiCad netlist). With no path it overwrites the KiCad file the project was imported from, keeping a .bak backup.",
+            """{"type":"object","properties":{"path":{"type":"string"},"netlist":{"type":"boolean","description":"Also write a .net next to it."}}}"""),
+        new("export_fab", "Write manufacturing files: Gerbers for each copper layer and Edge.Cuts plus an Excellon drill file in mm, all on the same origin. mode 'cnc' = copper/outline/drill only (for milling); 'fab' adds mask, silk, paste, BOM, CPL. Can mirror the bottom side for milling, or use KiCad's kicad-cli if installed.",
+            """
+              {"type":"object","properties":{"folder":{"type":"string","description":"Output folder (default: next to the project / Documents\\TraceMind)."},
+              "mode":{"type":"string","enum":["fab","cnc"]},"origin":{"type":"string","enum":["absolute","lower_left"],"description":"lower_left puts the board's lower-left corner at 0,0 (handy for CNC)."},
+              "mirror_bottom":{"type":"boolean"},"use_kicad":{"type":"boolean","description":"Use kicad-cli if installed."}}}
+            """),
         new("add_board_text", "Add silkscreen text to the board.",
             """{"type":"object","properties":{"text":{"type":"string"},"x":{"type":"number"},"y":{"type":"number"},"size":{"type":"number"},"layer":{"type":"string","enum":["top","bottom"]}},"required":["text","x","y"]}"""),
         new("run_drc", "Run design-rule and electrical checks. Returns errors/warnings with locations.",
@@ -138,6 +191,18 @@ public sealed partial class DesignTools(Func<Project> getProject)
                 "clear_routing" => ClearRouting(input),
                 "add_copper_pour" => AddPour(input),
                 "add_mounting_holes" => AddHoles(input),
+                "add_mounting_hole" => AddHole(input),
+                "move_mounting_hole" => MoveHole(input),
+                "delete_mounting_hole" => DeleteHoles(input),
+                "get_board" => GetBoard(input),
+                "draw_track" => DrawTrack(input),
+                "update_track" => UpdateTrack(input),
+                "delete_tracks" => DeleteTracks(input),
+                "set_track_width" => SetTrackWidth(input),
+                "add_via" => AddVia(input),
+                "add_wire_link" => AddWireLink(input),
+                "export_fab" => ExportFab(input),
+                "save_kicad" => SaveKiCad(input),
                 "add_board_text" => AddText(input),
                 "run_drc" => RunDrc(Int(input, "max_items") ?? 60),
                 "tidy_schematic" => Do(() => { EditOps.TidySchematic(P); return Ok("Schematic tidied."); }),
@@ -148,7 +213,7 @@ public sealed partial class DesignTools(Func<Project> getProject)
     }
 
     /// <summary>Tools that only read the design (no undo snapshot needed).</summary>
-    public static bool IsReadOnly(string name) => name is "get_design" or "list_library" or "run_drc";
+    public static bool IsReadOnly(string name) => name is "get_design" or "list_library" or "run_drc" or "get_board" or "export_fab" or "save_kicad";
 
     static string Do(Func<string> f) => f();
     static string Ok(string msg, object? extra = null)
@@ -234,6 +299,9 @@ public sealed partial class DesignTools(Func<Project> getProject)
                 ["outline_points"] = p.Board.Outline.Count, ["tracks"] = p.Board.Tracks.Count, ["vias"] = p.Board.Vias.Count,
                 ["pours"] = new JsonArray(p.Board.Zones.Select(z => (JsonNode)$"{z.Net} on {z.Layer.Display()}").ToArray()),
                 ["unrouted_connections"] = conn.Airwires.Count,
+                ["copper"] = p.Board.CopperLayers <= 1 ? $"single-sided, copper on {p.Board.SingleSideLayer.Display()}" : $"{p.Board.CopperLayers} layers",
+                ["mounting_holes"] = new JsonArray(Holes().Select(h => (JsonNode)$"{h.Ref}: {R(h.Diameter)} mm at {R(h.Position.X)},{R(h.Position.Y)}").ToArray()),
+                ["wire_links"] = new JsonArray(p.Components.Where(c => c.IsWireLink()).Select(c => (JsonNode)$"{c.Ref} {c.FootprintId}").ToArray()),
             },
             ["rules"] = new JsonObject
             {
@@ -418,10 +486,18 @@ public sealed partial class DesignTools(Func<Project> getProject)
             var r = Num(e, "corner_radius") ?? 0;
             b.Outline = RoundedRect(w, h, r);
         }
-        if (Int(e, "layers") is { } l) b.CopperLayers = l >= 4 ? 4 : 2;
+        if (Int(e, "layers") is { } l) b.CopperLayers = l >= 4 ? 4 : l <= 1 ? 1 : 2;
+        if (Str(e, "copper_side") is { } side) b.SingleSideLayer = side == "top" ? Layer.FCu : Layer.BCu;
+        if (b.CopperLayers <= 1)
+        {
+            // Move tracks onto the single copper layer and drop vias (they can't exist on a 1-layer board).
+            foreach (var tr in b.Tracks) tr.Layer = b.SingleSideLayer;
+            b.Vias.Clear();
+            foreach (var z in b.Zones) z.Layer = b.SingleSideLayer;
+        }
         if (Num(e, "thickness") is { } t) b.Thickness = t;
         var bb = b.OutlineBounds();
-        return Ok($"Board is {R(bb.Width)} x {R(bb.Height)} mm, {b.CopperLayers} layers.");
+        return Ok($"Board is {R(bb.Width)} x {R(bb.Height)} mm, " + (b.CopperLayers <= 1 ? $"single-sided ({b.SingleSideLayer.Display()})." : $"{b.CopperLayers} layers."));
     }
 
     public static List<Vec2> RoundedRect(double w, double h, double r)
@@ -530,9 +606,26 @@ public sealed partial class DesignTools(Func<Project> getProject)
         };
         if (e.TryGetProperty("net_layers", out var nlEl) && nlEl.ValueKind == JsonValueKind.Object)
             foreach (var kv in nlEl.EnumerateObject()) opt.NetLayer[kv.Name] = kv.Value.GetString() == "bottom" ? Layer.BCu : Layer.FCu;
+        opt.WireLinks = Bool(e, "wire_links") ?? false;
+        if (e.TryGetProperty("link_spacings", out var ls) && ls.ValueKind == JsonValueKind.Array && ls.GetArrayLength() > 0)
+            opt.LinkSpacings = ls.EnumerateArray().Where(x => x.ValueKind == JsonValueKind.Number).Select(x => x.GetDouble()).ToArray();
+        opt.AllowNeckDown = Bool(e, "allow_neck_down") ?? true;
+        if (e.TryGetProperty("neck_down", out var nd) && nd.ValueKind == JsonValueKind.Object)
+            foreach (var kv in nd.EnumerateObject()) if (kv.Value.ValueKind == JsonValueKind.Number) opt.NeckDown[kv.Name] = kv.Value.GetDouble();
         var res = new AutoRouter(P, opt, Progress, Cancellation).Route();
         var drc = Drc.Run(P);
-        return Ok(res.Summary() + " DRC: " + drc.Summary(), new { failed = res.FailedNets, vias = res.ViasAdded, length_mm = Math.Round(res.TrackLength) });
+        return Ok(res.Summary() + " DRC: " + drc.Summary(), new
+        {
+            failed = res.FailedNets,
+            wire_links_added = res.LinksAdded,
+            // where each failed connection is blocked — place a wire link / move parts there
+            failures = res.Failures.Select(f => new
+            {
+                net = f.Net, from = f.From, to = f.To, note = f.Note,
+                crossings = f.Crossings.Select(c => new { blocked_by = c.BlockedBy, entry = new[] { Math.Round(c.Entry.X, 2), Math.Round(c.Entry.Y, 2) }, exit = new[] { Math.Round(c.Exit.X, 2), Math.Round(c.Exit.Y, 2) }, length_mm = Math.Round(c.Length, 2) }),
+            }),
+            vias = res.ViasAdded, length_mm = Math.Round(res.TrackLength),
+        });
     }
 
     string ClearRouting(JsonElement e)
@@ -556,10 +649,290 @@ public sealed partial class DesignTools(Func<Project> getProject)
     {
         var d = Num(e, "diameter") ?? 3.2; var inset = Num(e, "inset") ?? 3.5;
         var b = P.Board.OutlineBounds();
-        P.Board.Holes.Clear();
+        if (Bool(e, "replace") ?? true) P.Board.Holes.Clear();
         foreach (var pt in new[] { new Vec2(b.MinX + inset, b.MinY + inset), new Vec2(b.MaxX - inset, b.MinY + inset), new Vec2(b.MaxX - inset, b.MaxY - inset), new Vec2(b.MinX + inset, b.MaxY - inset) })
             P.Board.Holes.Add(new MountingHole { Position = pt, Diameter = d });
-        return Ok($"Added 4 x {d} mm mounting holes, {inset} mm from the corners.");
+        P.Board.EnsureHoleRefs();
+        return Ok($"Added 4 x {d} mm mounting holes, {inset} mm from the corners: " + string.Join(", ", Holes().Select(h => $"{h.Ref} @{R(h.Position.X)},{R(h.Position.Y)}")));
+    }
+
+    List<MountingHole> Holes() { P.Board.EnsureHoleRefs(); return P.Board.Holes; }
+
+    string AddHole(JsonElement e)
+    {
+        var h = new MountingHole { Position = new(Num(e, "x") ?? 0, Num(e, "y") ?? 0), Diameter = Num(e, "diameter") ?? 3.2, Ref = Str(e, "reference") ?? "" };
+        if (h.Ref != "" && P.Board.FindHole(h.Ref) != null) return Err($"{h.Ref} already exists.");
+        P.Board.Holes.Add(h); P.Board.EnsureHoleRefs();
+        return Ok($"Added {h.Ref}: {R(h.Diameter)} mm at {R(h.Position.X)},{R(h.Position.Y)}." + HoleProblems(h));
+    }
+
+    string MoveHole(JsonElement e)
+    {
+        var h = P.Board.FindHole(Str(e, "reference") ?? "");
+        if (h == null) return Err($"No mounting hole '{Str(e, "reference")}'. Holes: {string.Join(", ", Holes().Select(x => x.Ref))}");
+        h.Position = new(Num(e, "x") ?? h.Position.X, Num(e, "y") ?? h.Position.Y);
+        if (Num(e, "diameter") is { } d) h.Diameter = d;
+        return Ok($"{h.Ref} is now {R(h.Diameter)} mm at {R(h.Position.X)},{R(h.Position.Y)}." + HoleProblems(h));
+    }
+
+    string DeleteHoles(JsonElement e)
+    {
+        var refs = StrList(e, "references");
+        var gone = Holes().Where(h => refs.Contains(h.Ref, StringComparer.OrdinalIgnoreCase)).ToList();
+        foreach (var h in gone) P.Board.Holes.Remove(h);
+        return gone.Count == 0 ? Err("No matching holes.") : Ok($"Deleted {string.Join(", ", gone.Select(h => h.Ref))}.");
+    }
+
+    string HoleProblems(MountingHole h)
+    {
+        var nl = NetlistBuilder.Build(P);
+        var shape = Shape.Circle(h.Position, h.Diameter / 2);
+        var hits = Connectivity.CollectCopper(P, nl).Where(c => Shape.Distance(c.Shape, shape) < P.Board.Rules.Clearance).Select(c => c.Describe()).Distinct().Take(5).ToList();
+        if (!ProjectGeometry.PointInPolygon(P.Board.Outline, h.Position)) hits.Insert(0, "outside the board");
+        return hits.Count > 0 ? " Warning — too close to: " + string.Join(", ", hits) : "";
+    }
+
+    // ======================= board view & manual copper =======================
+
+    /// <summary>Host-provided renderer for board images (PNG). Arguments: region or null.</summary>
+    public Func<TraceMind.Core.Geometry.Rect?, byte[]?>? RenderBoardImage { get; set; }
+    /// <summary>Host-provided default output folder for exports.</summary>
+    public Func<string>? DefaultExportFolder { get; set; }
+
+    static Layer ParseLayer(string? s, Layer def) => s switch { "top" => Layer.FCu, "bottom" => Layer.BCu, "in1" => Layer.In1Cu, "in2" => Layer.In2Cu, _ => def };
+    Layer DefaultLayer => P.Board.CopperLayers <= 1 ? P.Board.SingleSideLayer : Layer.FCu;
+    static string Id(Guid g) => ProjectGeometry.ShortId(g);
+    static string LayerName(Layer l) => l switch { Layer.FCu => "top", Layer.BCu => "bottom", Layer.In1Cu => "in1", _ => "in2" };
+
+    static TraceMind.Core.Geometry.Rect? Region(JsonElement e)
+    {
+        if (!e.TryGetProperty("region", out var r) || r.ValueKind != JsonValueKind.Object) return null;
+        return TraceMind.Core.Geometry.Rect.FromPoints(new(Num(r, "x1") ?? 0, Num(r, "y1") ?? 0), new(Num(r, "x2") ?? 0, Num(r, "y2") ?? 0));
+    }
+
+    string GetBoard(JsonElement e)
+    {
+        var p = P; var b = p.Board;
+        var region = Region(e);
+        bool In(Vec2 v) => region is not { } r || r.Contains(v);
+        bool SegIn(Vec2 a, Vec2 c) => region is not { } r || r.Contains(a) || r.Contains(c) || r.Contains((a + c) / 2);
+        var nl = NetlistBuilder.Build(p);
+        var conn = Connectivity.Analyze(p, nl);
+        var o = new JsonObject
+        {
+            ["units"] = "mm, origin top-left, +y down",
+            ["copper"] = b.CopperLayers <= 1 ? $"single-sided ({LayerName(b.SingleSideLayer)})" : $"{b.CopperLayers} layers",
+            ["outline"] = string.Join(" ", b.Outline.Select(v => $"{R(v.X)},{R(v.Y)}")),
+            ["rules"] = $"clearance {b.Rules.Clearance}, track {b.Rules.TrackWidth}, min track {b.Rules.MinTrackWidth}, edge {b.Rules.EdgeClearance}",
+            // track: id net layer width x1,y1 x2,y2
+            ["tracks"] = new JsonArray(b.Tracks.Where(t => SegIn(t.A, t.B)).Select(t =>
+                (JsonNode)$"{Id(t.Id)} {t.Net} {LayerName(t.Layer)} w{R(t.Width)} {R(t.A.X)},{R(t.A.Y)} {R(t.B.X)},{R(t.B.Y)}{(t.Locked ? " locked" : "")}").ToArray()),
+            ["vias"] = new JsonArray(b.Vias.Where(v => In(v.Position)).Select(v => (JsonNode)$"{Id(v.Id)} {v.Net} {R(v.Position.X)},{R(v.Position.Y)} d{R(v.Diameter)}/{R(v.Drill)}").ToArray()),
+            ["holes"] = new JsonArray(Holes().Where(h => In(h.Position)).Select(h => (JsonNode)$"{h.Ref} {R(h.Position.X)},{R(h.Position.Y)} d{R(h.Diameter)}").ToArray()),
+            ["unrouted"] = new JsonArray(conn.Airwires.Where(a => SegIn(a.A, a.B)).Select(a => (JsonNode)$"{a.Net}: {R(a.A.X)},{R(a.A.Y)} -> {R(a.B.X)},{R(a.B.Y)}").ToArray()),
+        };
+        if (Bool(e, "include_pads") ?? true)
+            o["pads"] = new JsonArray(p.AllPads().Where(pd => In(pd.Position)).Select(pd =>
+            {
+                var net = nl.NetOfPad(pd.Component, pd.Pad.Number);
+                var kind = pd.Pad.IsThrough ? $"tht d{R(pd.Pad.Drill)}" : (pd.OnBottom ? "smd bottom" : "smd top");
+                return (JsonNode)$"{pd.Component.Ref}.{pd.Pad.Number} {(net == "" ? "-" : net)} {R(pd.Position.X)},{R(pd.Position.Y)} {R(pd.Pad.Size.X)}x{R(pd.Pad.Size.Y)} {pd.Pad.Shape.ToString().ToLowerInvariant()} {kind}";
+            }).ToArray());
+        if ((Bool(e, "image") ?? false))
+        {
+            var png = RenderBoardImage?.Invoke(region);
+            if (png != null) o["__image_png"] = Convert.ToBase64String(png);
+            else o["image_note"] = "Image rendering isn't available here.";
+        }
+        return Ok($"{b.Tracks.Count} tracks, {b.Vias.Count} vias, {b.Holes.Count} holes, {conn.Airwires.Count} unrouted connections.", o);
+    }
+
+    /// <summary>Clearance problems for some new/changed copper (list of short messages).</summary>
+    List<string> ClearanceProblems(IEnumerable<Track> tracks, IEnumerable<Via>? vias = null)
+    {
+        var p = P; var rules = p.Board.Rules;
+        var nl = NetlistBuilder.Build(p);
+        var copper = Connectivity.CollectCopper(p, nl);
+        var probs = new List<string>();
+        void Check(Shape shape, string net, Func<CopperItem, bool> sameLayer, string what, Guid selfId)
+        {
+            foreach (var it in copper)
+            {
+                if ((it.Track?.Id ?? it.Via?.Id) == selfId) continue;
+                if (it.Net == net && net != "") continue;
+                if (!sameLayer(it)) continue;
+                var clr = Math.Max(rules.ClearanceFor(net), rules.ClearanceFor(it.Net));
+                var d = Shape.Distance(shape, it.Shape);
+                if (d < clr - 1e-4) probs.Add($"{what} is {R(Math.Max(0, d))} mm from {it.Describe()} [{(it.Net == "" ? "no net" : it.Net)}] (needs {R(clr)})");
+            }
+            foreach (var h in p.Board.Holes)
+                if (Shape.Distance(shape, Shape.Circle(h.Position, h.Diameter / 2)) < rules.Clearance) probs.Add($"{what} touches mounting hole {h.Ref}");
+            var pts = shape.ToOutline(2);
+            if (pts.Any(pt => !ProjectGeometry.PointInPolygon(p.Board.Outline, pt))) probs.Add($"{what} leaves the board");
+        }
+        foreach (var t in tracks) Check(ProjectGeometry.TrackShape(t), t.Net, it => it.OnLayer(t.Layer), $"track {Id(t.Id)}", t.Id);
+        foreach (var v in vias ?? []) Check(ProjectGeometry.ViaShape(v), v.Net, _ => true, $"via {Id(v.Id)}", v.Id);
+        return probs.Distinct().Take(20).ToList();
+    }
+
+    string DrawTrack(JsonElement e)
+    {
+        var net = Str(e, "net") ?? "";
+        var layer = ParseLayer(Str(e, "layer"), DefaultLayer);
+        if (!P.Board.CopperLayerList().Contains(layer)) return Err($"This board has no {LayerName(layer)} copper layer.");
+        var pts = e.GetProperty("points").EnumerateArray().Select(pt => new Vec2(pt[0].GetDouble(), pt[1].GetDouble())).ToList();
+        if (pts.Count < 2) return Err("Need at least two points.");
+        var widths = e.TryGetProperty("widths", out var ws) && ws.ValueKind == JsonValueKind.Array ? ws.EnumerateArray().Select(x => x.GetDouble()).ToList() : [];
+        double w0 = Num(e, "width") ?? P.Board.Rules.WidthFor(net);
+        bool lk = Bool(e, "lock") ?? true;
+        var added = new List<Track>();
+        for (int i = 0; i + 1 < pts.Count; i++)
+        {
+            if (pts[i].ApproxEquals(pts[i + 1])) continue;
+            var w = i < widths.Count ? widths[i] : w0;
+            if (w < P.Board.Rules.MinTrackWidth - 1e-6) return Err($"Segment {i + 1} width {w} is below the minimum track width {P.Board.Rules.MinTrackWidth}.");
+            added.Add(new Track { A = pts[i], B = pts[i + 1], Width = w, Layer = layer, Net = net, Locked = lk });
+        }
+        P.Board.Tracks.AddRange(added);
+        var probs = ClearanceProblems(added);
+        var nl = NetlistBuilder.Build(P);
+        if (net != "" && nl.Find(net) == null) probs.Insert(0, $"note: no schematic net is called '{net}'");
+        return Ok($"Drew {added.Count} segments on {LayerName(layer)} for {net}: {string.Join(" ", added.Select(t => Id(t.Id)))}." +
+            (probs.Count > 0 ? " Problems: " + string.Join("; ", probs) : " No clearance problems."));
+    }
+
+    Track? FindTrack(string id) => P.Board.Tracks.FirstOrDefault(t => Id(t.Id).Equals(id, StringComparison.OrdinalIgnoreCase) || t.Id.ToString("N").StartsWith(id, StringComparison.OrdinalIgnoreCase));
+
+    string UpdateTrack(JsonElement e)
+    {
+        var t = FindTrack(Str(e, "id") ?? "");
+        if (t == null) return Err($"No track '{Str(e, "id")}'. Use get_board to list track ids.");
+        if (e.TryGetProperty("start", out var a) && a.ValueKind == JsonValueKind.Array) t.A = new(a[0].GetDouble(), a[1].GetDouble());
+        if (e.TryGetProperty("end", out var b) && b.ValueKind == JsonValueKind.Array) t.B = new(b[0].GetDouble(), b[1].GetDouble());
+        if (Num(e, "width") is { } w) t.Width = w;
+        if (Str(e, "layer") is { } l) t.Layer = ParseLayer(l, t.Layer);
+        if (Str(e, "net") is { } n) t.Net = n;
+        t.Auto = false;
+        var probs = ClearanceProblems([t]);
+        return Ok($"Track {Id(t.Id)}: {R(t.A.X)},{R(t.A.Y)} -> {R(t.B.X)},{R(t.B.Y)} w{R(t.Width)} {LayerName(t.Layer)}." + (probs.Count > 0 ? " Problems: " + string.Join("; ", probs) : ""));
+    }
+
+    string DeleteTracks(JsonElement e)
+    {
+        var ids = StrList(e, "ids");
+        var net = Str(e, "net"); var layerS = Str(e, "layer");
+        bool locked = Bool(e, "include_locked") ?? true;
+        Vec2? c = null; double rad = 0;
+        if (e.TryGetProperty("near", out var nr) && nr.ValueKind == JsonValueKind.Object) { c = new(Num(nr, "x") ?? 0, Num(nr, "y") ?? 0); rad = Num(nr, "radius") ?? 1; }
+        if (ids.Count == 0 && net == null && layerS == null && c == null) return Err("Say which copper to delete: ids, net, layer and/or near.");
+        bool Match(Guid id, string n, Layer? l, Func<Vec2, double> dist, bool isLocked) =>
+            (ids.Count == 0 || ids.Any(x => Id(id).Equals(x, StringComparison.OrdinalIgnoreCase))) && (net == null || n == net)
+            && (layerS == null || l == null || l == ParseLayer(layerS, l.Value)) && (c == null || dist(c.Value) <= rad) && (locked || !isLocked);
+        int t = P.Board.Tracks.RemoveAll(x => Match(x.Id, x.Net, x.Layer, v => Shape.PointSegDistance(v, x.A, x.B), x.Locked));
+        int vcount = P.Board.Vias.RemoveAll(x => Match(x.Id, x.Net, null, v => v.DistanceTo(x.Position), x.Locked));
+        return Ok($"Deleted {t} tracks and {vcount} vias.");
+    }
+
+    string SetTrackWidth(JsonElement e)
+    {
+        var w = Num(e, "width") ?? 0;
+        if (w < P.Board.Rules.MinTrackWidth - 1e-6) return Err($"Width below minimum {P.Board.Rules.MinTrackWidth}.");
+        var ids = StrList(e, "ids"); var net = Str(e, "net"); var region = Region(e);
+        bool onlyClear = Bool(e, "only_where_clear") ?? true;
+        var sel = P.Board.Tracks.Where(t => (ids.Count == 0 || ids.Any(x => Id(t.Id).Equals(x, StringComparison.OrdinalIgnoreCase))) && (net == null || t.Net == net)
+            && (region == null || region.Value.Contains(t.A) || region.Value.Contains(t.B))).ToList();
+        if (ids.Count == 0 && net == null) return Err("Give track ids or a net.");
+        int changed = 0; var kept = new List<string>();
+        foreach (var t in sel)
+        {
+            var old = t.Width; t.Width = w;
+            if (onlyClear && w > old && ClearanceProblems([t]).Count > 0) { t.Width = old; kept.Add(Id(t.Id)); }
+            else changed++;
+        }
+        var probs = onlyClear ? [] : ClearanceProblems(sel);
+        return Ok($"Set {changed} segments to {R(w)} mm." + (kept.Count > 0 ? $" Kept {kept.Count} narrower where {R(w)} mm would break clearance: {string.Join(" ", kept.Take(30))}." : "")
+            + (probs.Count > 0 ? " Problems: " + string.Join("; ", probs) : ""));
+    }
+
+    string AddVia(JsonElement e)
+    {
+        if (P.Board.CopperLayers <= 1) return Err("Single-sided board: use add_wire_link instead of a via.");
+        var net = Str(e, "net") ?? "";
+        var v = new Via { Position = new(Num(e, "x") ?? 0, Num(e, "y") ?? 0), Net = net, Diameter = Num(e, "diameter") ?? P.Board.Rules.ViaDiameterFor(net), Drill = Num(e, "drill") ?? P.Board.Rules.ViaDrillFor(net) };
+        P.Board.Vias.Add(v);
+        var probs = ClearanceProblems([], [v]);
+        return Ok($"Via {Id(v.Id)} at {R(v.Position.X)},{R(v.Position.Y)}." + (probs.Count > 0 ? " Problems: " + string.Join("; ", probs) : ""));
+    }
+
+    string AddWireLink(JsonElement e)
+    {
+        var net = Str(e, "net") ?? "";
+        if (net == "") return Err("net required");
+        Vec2 a, b;
+        if (Num(e, "x1") is { } x1 && Num(e, "y1") is { } y1 && Num(e, "x2") is { } x2 && Num(e, "y2") is { } y2) { a = new(x1, y1); b = new(x2, y2); }
+        else
+        {
+            var c = new Vec2(Num(e, "x") ?? 0, Num(e, "y") ?? 0);
+            var ang = (Num(e, "angle") ?? 0) * Math.PI / 180; var sp = Num(e, "spacing") ?? 10.16;
+            var d = new Vec2(Math.Cos(ang), Math.Sin(ang)) * (sp / 2);
+            a = c - d; b = c + d;
+        }
+        double spacing = Math.Round(a.DistanceTo(b), 3);
+        if (spacing < 3) return Err("Pads are too close for a wire link (min 3 mm).");
+        var comp = EditOps.AddComponent(P, "Jumper", "Wire link", "WireLink_P" + spacing.ToString("0.###", CultureInfo.InvariantCulture));
+        comp.Fields["WireLink"] = "manual";
+        comp.PcbPos = (a + b) / 2; comp.PcbRot = -Math.Atan2(b.Y - a.Y, b.X - a.X) * 180 / Math.PI; comp.Placed = true;
+        EditOps.ConnectPins(P, net, [(comp.Ref, "1"), (comp.Ref, "2")]);
+        var nl = NetlistBuilder.Build(P);
+        var copper = Connectivity.CollectCopper(P, nl);
+        var probs = new List<string>();
+        foreach (var pad in P.Pads(comp))
+            foreach (var it in copper.Where(it => it.Pad?.Component != comp && it.Net != net))
+                if (Shape.Distance(pad.Shape, it.Shape) < P.Board.Rules.Clearance) probs.Add($"pad {pad.Pad.Number} hits {it.Describe()} [{it.Net}]");
+        return Ok($"Added wire link {comp.Ref} for {net}: pads at {R(a.X)},{R(a.Y)} and {R(b.X)},{R(b.Y)} ({spacing} mm). Route each side to its pad." +
+            (probs.Count > 0 ? " Problems: " + string.Join("; ", probs.Distinct().Take(10)) : ""));
+    }
+
+    string SaveKiCad(JsonElement e)
+    {
+        var path = Str(e, "path");
+        if (string.IsNullOrWhiteSpace(path)) path = P.KiCadSource;
+        if (string.IsNullOrWhiteSpace(path))
+            path = Path.Combine(DefaultExportFolder?.Invoke() ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TraceMind"),
+                TraceMind.Core.Export.GerberExporter.Sanitize(P.Name) + ".kicad_pcb");
+        if (!path.EndsWith(".kicad_pcb", StringComparison.OrdinalIgnoreCase)) path += ".kicad_pcb";
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        bool existed = File.Exists(path);
+        TraceMind.Core.KiCad.KiCadPcb.SaveTo(P, path);
+        var msg = $"Saved {path}" + (existed ? " (previous version kept as .bak)." : ".");
+        if (Bool(e, "netlist") ?? false)
+        {
+            var net = Path.ChangeExtension(path, ".net");
+            File.WriteAllText(net, TraceMind.Core.KiCad.KiCadNetlist.Export(P));
+            msg += $" Netlist: {net}.";
+        }
+        return Ok(msg);
+    }
+
+    string ExportFab(JsonElement e)
+    {
+        var folder = Str(e, "folder");
+        if (string.IsNullOrWhiteSpace(folder))
+            folder = Path.Combine(DefaultExportFolder?.Invoke() ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TraceMind"),
+                TraceMind.Core.Export.GerberExporter.Sanitize(P.Name) + "-fab");
+        bool cnc = Str(e, "mode") == "cnc";
+        bool mirror = Bool(e, "mirror_bottom") ?? false;
+        if (Bool(e, "use_kicad") ?? false)
+        {
+            if (TraceMind.Core.Export.KiCadCli.Find() == null) return Err("kicad-cli isn't installed (KiCad 7+). Call export_fab without use_kicad to use the built-in exporter.");
+            var kr = Task.Run(() => TraceMind.Core.Export.KiCadCli.ExportAsync(P, folder, cnc, mirror)).GetAwaiter().GetResult();
+            return Ok($"kicad-cli wrote {kr.Files.Count} files to {folder}.", new { files = kr.Files.Select(Path.GetFileName), notes = kr.Warnings });
+        }
+        var res = TraceMind.Core.Export.GerberExporter.Export(P, folder, new TraceMind.Core.Export.ExportOptions
+        {
+            Assembly = !cnc, MirrorBottom = mirror, Origin = Str(e, "origin") ?? (cnc ? "lower_left" : "absolute"),
+        });
+        return Ok($"Wrote {res.Files.Count} files to {folder}.", new { files = res.Files.Select(Path.GetFileName), notes = res.Warnings });
     }
 
     string AddText(JsonElement e)

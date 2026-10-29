@@ -82,6 +82,14 @@ public static class Connectivity
                     if (!a.SharesLayer(b) || !a.Shape.Bounds.Intersects(b.Shape.Bounds)) continue;
                     if (Shape.Distance(a.Shape, b.Shape) <= 0.001) parent[Find(i)] = Find(j);
                 }
+            // Pads joined inside a part (same pad number, e.g. switch legs / SOT-223 tab) or by a wire link.
+            for (int i = 0; i < n; i++)
+                for (int j = i + 1; j < n; j++)
+                {
+                    var a = list[i].Pad; var b = list[j].Pad;
+                    if (a == null || b == null || a.Component != b.Component) continue;
+                    if (a.Pad.Number == b.Pad.Number || a.Component.IsWireLink()) parent[Find(i)] = Find(j);
+                }
             // Copper pours join everything of their net that touches them.
             foreach (var z in zones.Where(z => z.Net == byNet.Key && z.Outline.Count >= 3))
             {

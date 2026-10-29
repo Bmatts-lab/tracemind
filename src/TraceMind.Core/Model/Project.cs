@@ -203,12 +203,32 @@ public sealed class Board
     public DesignRules Rules { get; set; } = new();
     public double Thickness { get; set; } = 1.6;
 
+    /// <summary>For single-layer boards (CopperLayers = 1): which side carries the copper. Bottom is usual for THT / CNC-milled boards.</summary>
+    public Layer SingleSideLayer { get; set; } = Layer.BCu;
+
     public IEnumerable<Layer> CopperLayerList()
     {
+        if (CopperLayers <= 1) { yield return SingleSideLayer == Layer.FCu ? Layer.FCu : Layer.BCu; yield break; }
         yield return Layer.FCu;
         if (CopperLayers >= 4) { yield return Layer.In1Cu; yield return Layer.In2Cu; }
         yield return Layer.BCu;
     }
+
+    /// <summary>Give every mounting hole a unique reference (H1, H2…), keeping existing ones.</summary>
+    public void EnsureHoleRefs()
+    {
+        var all = Holes.Where(h => !string.IsNullOrEmpty(h.Ref)).Select(h => h.Ref.ToUpperInvariant()).ToHashSet();
+        var seen = new HashSet<string>();
+        int n = 1;
+        foreach (var h in Holes)
+        {
+            if (!string.IsNullOrEmpty(h.Ref) && seen.Add(h.Ref.ToUpperInvariant())) continue;
+            while (all.Contains("H" + n)) n++;
+            h.Ref = "H" + n; all.Add(h.Ref); seen.Add(h.Ref);
+        }
+    }
+
+    public MountingHole? FindHole(string reference) { EnsureHoleRefs(); return Holes.FirstOrDefault(h => string.Equals(h.Ref, reference, StringComparison.OrdinalIgnoreCase)); }
 
     public Rect OutlineBounds()
     {
@@ -221,6 +241,8 @@ public sealed class Board
 public sealed class MountingHole
 {
     public Guid Id { get; set; } = Guid.NewGuid();
+    /// <summary>Reference like H1, H2 (assigned automatically).</summary>
+    public string Ref { get; set; } = "";
     public Vec2 Position { get; set; }
     public double Diameter { get; set; } = 3.2;
 }
@@ -230,12 +252,16 @@ public sealed class Project
     public int FormatVersion { get; set; } = 1;
     public string Name { get; set; } = "Untitled";
     public string Notes { get; set; } = "";
+    /// <summary>Path of the KiCad board this project was imported from (for "save back to KiCad").</summary>
+    public string KiCadSource { get; set; } = "";
     public List<Component> Components { get; set; } = [];
     public Schematic Schematic { get; set; } = new();
     public Board Board { get; set; } = new();
     /// <summary>Symbols used by this project (copied from the built-in library or created by the AI).</summary>
     public Dictionary<string, SymbolDef> Symbols { get; set; } = [];
     public Dictionary<string, FootprintDef> Footprints { get; set; } = [];
+
+    public Project WithKiCadSource(string path) { KiCadSource = path; return this; }
 
     public Component? Find(string reference) => Components.FirstOrDefault(c => string.Equals(c.Ref, reference, StringComparison.OrdinalIgnoreCase));
 }

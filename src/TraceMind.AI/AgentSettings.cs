@@ -24,6 +24,8 @@ public sealed class AgentSettings
     public string ApiBaseUrl { get; set; } = "";
     public string LastFolder { get; set; } = "";
     public List<string> RecentFiles { get; set; } = [];
+    /// <summary>Reopen the most recent project when TraceMind starts.</summary>
+    public bool ReopenLastProject { get; set; } = true;
 
     static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TraceMind");
     static string FilePath => Path.Combine(Dir, "settings.json");

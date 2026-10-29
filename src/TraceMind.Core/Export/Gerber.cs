@@ -17,8 +17,12 @@ internal sealed class GerberWriter
     string? currentAperture;
     bool dark = true;
 
-    public GerberWriter(string fileFunction, string polarity = "Positive")
+    readonly Func<Vec2, Vec2> map;
+
+    /// <param name="map">Board (mm, +y down) → Gerber (mm, +y up) coordinates. Default flips Y around the board origin.</param>
+    public GerberWriter(string fileFunction, string polarity = "Positive", Func<Vec2, Vec2>? map = null)
     {
+        this.map = map ?? (v => new Vec2(v.X, -v.Y));
         header.AppendLine("%TF.GenerationSoftware,TraceMind,TraceMind,1.0*%");
         header.AppendLine($"%TF.CreationDate,{DateTime.UtcNow:yyyy-MM-ddTHH:mm:ssZ}*%");
         header.AppendLine($"%TF.FileFunction,{fileFunction}*%");
@@ -30,7 +34,7 @@ internal sealed class GerberWriter
 
     static string N(double v) => ((long)Math.Round(v * 1_000_000)).ToString(Inv);
     static string F(double v) => v.ToString("0.######", Inv);
-    static string XY(Vec2 p) => $"X{N(p.X)}Y{N(-p.Y)}";
+    string XY(Vec2 p) { var q = map(p); return $"X{N(q.X)}Y{N(q.Y)}"; }
 
     int Ap(string def)
     {
@@ -104,10 +108,23 @@ internal sealed class GerberWriter
 
 public sealed record ExportResult(List<string> Files, string Folder, List<string> Warnings);
 
+public sealed class ExportOptions
+{
+    /// <summary>Also write solder mask, paste, silkscreen, BOM and CPL (for a PCB fab). False = copper, outline and drills only (CNC milling).</summary>
+    public bool Assembly { get; set; } = true;
+    /// <summary>"absolute" = board coordinates (Y flipped), "lower_left" = the board's lower-left corner is (0,0) in every file.</summary>
+    public string Origin { get; set; } = "absolute";
+    /// <summary>Also write mirrored copies (X flipped) of the bottom copper, outline and drill files, for milling the bottom side.</summary>
+    public bool MirrorBottom { get; set; }
+    public bool Zip { get; set; } = true;
+}
+
 public static class GerberExporter
 {
-    /// <summary>Write a complete fabrication set (Gerbers, drill, BOM, CPL) into folder and a zip next to it.</summary>
-    public static ExportResult Export(Project project, string folder, bool makeZip = true)
+    public static ExportResult Export(Project project, string folder, bool makeZip = true) => Export(project, folder, new ExportOptions { Zip = makeZip });
+
+    /// <summary>Write a fabrication set (Gerbers, Excellon drill in mm, optionally BOM/CPL) into folder, all on the same origin.</summary>
+    public static ExportResult Export(Project project, string folder, ExportOptions options)
     {
         Directory.CreateDirectory(folder);
         var netlist = NetlistBuilder.Build(project);
@@ -115,75 +132,99 @@ public static class GerberExporter
         var name = Sanitize(project.Name);
         var board = project.Board; var rules = board.Rules;
         var pads = project.AllPads().ToList();
+        var bb = board.OutlineBounds();
+        bool lowerLeft = options.Origin.Replace("-", "_").Equals("lower_left", StringComparison.OrdinalIgnoreCase);
+        Func<Vec2, Vec2> map = lowerLeft ? v => new Vec2(v.X - bb.MinX, bb.MaxY - v.Y) : v => new Vec2(v.X, -v.Y);
+        Func<Vec2, Vec2> mirrored = lowerLeft ? v => new Vec2(bb.MaxX - v.X, bb.MaxY - v.Y) : v => new Vec2(bb.MinX + bb.MaxX - v.X, -v.Y);
 
         void Write(string suffix, string content) { var p = Path.Combine(folder, $"{name}-{suffix}"); File.WriteAllText(p, content); files.Add(p); }
+
+        string Copper(Layer layer, string func, Func<Vec2, Vec2> m)
+        {
+            var g = new GerberWriter(func, map: m);
+            DrawZones(project, netlist, g, layer, pads);
+            g.Polarity(true);
+            foreach (var t in board.Tracks.Where(t => t.Layer == layer)) g.Stroke(t.A, t.B, t.Width);
+            foreach (var v in board.Vias) g.FlashCircle(v.Position, v.Diameter);
+            foreach (var p in pads.Where(p => p.OnLayer(layer))) g.Shape(p.Shape);
+            return g.Build();
+        }
+        string Outline(Func<Vec2, Vec2> m)
+        {
+            var g = new GerberWriter("Profile,NP", map: m);
+            g.Polyline(board.Outline, 0.1, closed: true);
+            return g.Build();
+        }
+        var pth = pads.Where(p => p.Pad.IsThrough && p.Pad.Plated).Select(p => (p.Position, p.Pad.Drill)).Concat(board.Vias.Select(v => (v.Position, v.Drill))).ToList();
+        var npth = pads.Where(p => p.Pad.IsThrough && !p.Pad.Plated).Select(p => (p.Position, p.Pad.Drill)).Concat(board.Holes.Select(h => (h.Position, h.Diameter))).ToList();
 
         // ---- copper ----
         var copperLayers = board.CopperLayerList().ToList();
         for (int li = 0; li < copperLayers.Count; li++)
         {
             var layer = copperLayers[li];
-            string pos = li == 0 ? "Top" : li == copperLayers.Count - 1 ? "Bot" : "Inr";
-            var g = new GerberWriter($"Copper,L{li + 1},{pos}");
-            DrawZones(project, netlist, g, layer, pads);
-            g.Polarity(true);
-            foreach (var t in board.Tracks.Where(t => t.Layer == layer)) g.Stroke(t.A, t.B, t.Width);
-            foreach (var v in board.Vias) g.FlashCircle(v.Position, v.Diameter);
-            foreach (var p in pads.Where(p => p.OnLayer(layer))) g.Shape(p.Shape);
+            string pos = layer == Layer.FCu ? "Top" : layer == Layer.BCu ? "Bot" : "Inr";
+            int num = layer == Layer.FCu ? 1 : layer == Layer.BCu ? board.CopperLayers <= 1 ? 1 : board.CopperLayers : li + 1;
             var ext = layer switch { Layer.FCu => "F_Cu.gtl", Layer.BCu => "B_Cu.gbl", Layer.In1Cu => "In1_Cu.g2", _ => "In2_Cu.g3" };
-            Write(ext, g.Build());
+            Write(ext, Copper(layer, $"Copper,L{num},{pos}", map));
         }
+        Write("Edge_Cuts.gm1", Outline(map));
+        Write("PTH.drl", Excellon(pth, plated: true, map));
+        if (npth.Count > 0) Write("NPTH.drl", Excellon(npth, plated: false, map));
 
-        // ---- solder mask (openings) ----
-        foreach (var (layer, ext, func) in new[] { (Layer.FCu, "F_Mask.gts", "Soldermask,Top"), (Layer.BCu, "B_Mask.gbs", "Soldermask,Bot") })
+        if (options.MirrorBottom)
         {
-            var g = new GerberWriter(func, "Negative");
-            foreach (var p in pads.Where(p => p.Pad.IsThrough || p.OnLayer(layer))) g.Shape(p.Shape.Inflate(rules.MaskExpansion));
-            Write(ext, g.Build());
-        }
-        // ---- paste ----
-        foreach (var (bottom, ext, func) in new[] { (false, "F_Paste.gtp", "Paste,Top"), (true, "B_Paste.gbp", "Paste,Bot") })
-        {
-            var g = new GerberWriter(func);
-            foreach (var p in pads.Where(p => !p.Pad.IsThrough && p.OnBottom == bottom)) g.Shape(p.Shape);
-            Write(ext, g.Build());
-        }
-        // ---- silkscreen ----
-        foreach (var (bottom, ext, func) in new[] { (false, "F_Silkscreen.gto", "Legend,Top"), (true, "B_Silkscreen.gbo", "Legend,Bot") })
-        {
-            var g = new GerberWriter(func);
-            foreach (var c in project.Components.Where(c => c.Placed && c.OnBottom == bottom && !c.DoNotPopulate))
+            if (copperLayers.Contains(Layer.BCu))
             {
-                var fp = project.Footprint(c);
-                if (fp == null) continue;
-                foreach (var gr in fp.Silk) DrawGraphic(g, gr, p => ProjectGeometry.PcbToWorld(c, p), rules.SilkWidth);
-                var cy = project.Courtyard(c);
-                var refPos = new Vec2(cy.Center.X, cy.MinY - 0.7);
-                foreach (var stroke in StrokeFont.Layout(c.Ref, refPos, 1.0, 0, bottom)) g.Polyline(stroke, rules.SilkWidth);
+                Write("B_Cu-mirrored.gbl", Copper(Layer.BCu, $"Copper,L{(board.CopperLayers <= 1 ? 1 : board.CopperLayers)},Bot", mirrored));
+                Write("Edge_Cuts-mirrored.gm1", Outline(mirrored));
+                Write("PTH-mirrored.drl", Excellon(pth, plated: true, mirrored));
+                if (npth.Count > 0) Write("NPTH-mirrored.drl", Excellon(npth, plated: false, mirrored));
+                warnings.Add("Mirrored files (*-mirrored) are flipped left-to-right around the board outline, for milling and drilling from the bottom side. Use them as a set.");
             }
-            foreach (var t in board.Texts.Where(t => t.Layer == (bottom ? Layer.BSilk : Layer.FSilk)))
-                foreach (var stroke in StrokeFont.Layout(t.Text, t.Position, t.Size, t.Rotation, bottom)) g.Polyline(stroke, Math.Max(rules.SilkWidth, t.Size / 8));
-            Write(ext, g.Build());
+            else warnings.Add("Mirroring skipped: this board has no bottom copper.");
         }
-        // ---- outline ----
+
+        if (options.Assembly)
         {
-            var g = new GerberWriter("Profile,NP");
-            g.Polyline(board.Outline, 0.1, closed: true);
-            Write("Edge_Cuts.gm1", g.Build());
+            // ---- solder mask (openings) ----
+            foreach (var (layer, ext, func) in new[] { (Layer.FCu, "F_Mask.gts", "Soldermask,Top"), (Layer.BCu, "B_Mask.gbs", "Soldermask,Bot") })
+            {
+                var g = new GerberWriter(func, "Negative", map);
+                foreach (var p in pads.Where(p => p.Pad.IsThrough || p.OnLayer(layer))) g.Shape(p.Shape.Inflate(rules.MaskExpansion));
+                Write(ext, g.Build());
+            }
+            // ---- paste ----
+            foreach (var (bottom, ext, func) in new[] { (false, "F_Paste.gtp", "Paste,Top"), (true, "B_Paste.gbp", "Paste,Bot") })
+            {
+                var g = new GerberWriter(func, map: map);
+                foreach (var p in pads.Where(p => !p.Pad.IsThrough && p.OnBottom == bottom)) g.Shape(p.Shape);
+                Write(ext, g.Build());
+            }
+            // ---- silkscreen ----
+            foreach (var (bottom, ext, func) in new[] { (false, "F_Silkscreen.gto", "Legend,Top"), (true, "B_Silkscreen.gbo", "Legend,Bot") })
+            {
+                var g = new GerberWriter(func, map: map);
+                foreach (var c in project.Components.Where(c => c.Placed && c.OnBottom == bottom && !c.DoNotPopulate))
+                {
+                    var fp = project.Footprint(c);
+                    if (fp == null) continue;
+                    foreach (var gr in fp.Silk) DrawGraphic(g, gr, p => ProjectGeometry.PcbToWorld(c, p), rules.SilkWidth);
+                    var cy = project.Courtyard(c);
+                    var refPos = new Vec2(cy.Center.X, cy.MinY - 0.7);
+                    foreach (var stroke in StrokeFont.Layout(c.Ref, refPos, 1.0, 0, bottom)) g.Polyline(stroke, rules.SilkWidth);
+                }
+                foreach (var t in board.Texts.Where(t => t.Layer == (bottom ? Layer.BSilk : Layer.FSilk)))
+                    foreach (var stroke in StrokeFont.Layout(t.Text, t.Position, t.Size, t.Rotation, bottom)) g.Polyline(stroke, Math.Max(rules.SilkWidth, t.Size / 8));
+                Write(ext, g.Build());
+            }
+            File.WriteAllText(Path.Combine(folder, $"{name}-BOM.csv"), BomExporter.Bom(project)); files.Add(Path.Combine(folder, $"{name}-BOM.csv"));
+            File.WriteAllText(Path.Combine(folder, $"{name}-CPL.csv"), BomExporter.Cpl(project)); files.Add(Path.Combine(folder, $"{name}-CPL.csv"));
         }
-        // ---- drills ----
-        Write("PTH.drl", Excellon(pads.Where(p => p.Pad.IsThrough && p.Pad.Plated).Select(p => (p.Position, p.Pad.Drill))
-            .Concat(board.Vias.Select(v => (v.Position, v.Drill))), plated: true));
-        var npth = pads.Where(p => p.Pad.IsThrough && !p.Pad.Plated).Select(p => (p.Position, p.Pad.Drill))
-            .Concat(board.Holes.Select(h => (h.Position, h.Diameter))).ToList();
-        if (npth.Count > 0) Write("NPTH.drl", Excellon(npth, plated: false));
 
-        // ---- assembly ----
-        File.WriteAllText(Path.Combine(folder, $"{name}-BOM.csv"), BomExporter.Bom(project)); files.Add(Path.Combine(folder, $"{name}-BOM.csv"));
-        File.WriteAllText(Path.Combine(folder, $"{name}-CPL.csv"), BomExporter.Cpl(project)); files.Add(Path.Combine(folder, $"{name}-CPL.csv"));
-
+        if (lowerLeft) warnings.Add($"Origin: the board's lower-left corner is (0,0) in every file; the board spans {bb.Width:0.###} x {bb.Height:0.###} mm.");
         if (board.Zones.Count > 0) warnings.Add("Copper pours are exported with solid connections (no thermal reliefs); isolated islands are not removed.");
-        if (makeZip)
+        if (options.Zip)
         {
             var zip = Path.Combine(folder, $"{name}-gerbers.zip");
             if (File.Exists(zip)) File.Delete(zip);
@@ -236,8 +277,9 @@ public static class GerberExporter
         }
     }
 
-    public static string Excellon(IEnumerable<(Vec2 pos, double drill)> holes, bool plated)
+    public static string Excellon(IEnumerable<(Vec2 pos, double drill)> holes, bool plated, Func<Vec2, Vec2>? map = null)
     {
+        map ??= v => new Vec2(v.X, -v.Y);
         var inv = CultureInfo.InvariantCulture;
         var list = holes.Where(h => h.drill > 0).ToList();
         var tools = list.Select(h => Math.Round(h.drill, 3)).Distinct().OrderBy(d => d).ToList();
@@ -255,7 +297,10 @@ public static class GerberExporter
         {
             sb.AppendLine($"T{i + 1}");
             foreach (var h in list.Where(h => Math.Round(h.drill, 3) == tools[i]))
-                sb.AppendLine($"X{h.pos.X.ToString("0.###", inv)}Y{(-h.pos.Y).ToString("0.###", inv)}");
+            {
+                var q = map(h.pos);
+                sb.AppendLine($"X{q.X.ToString("0.###", inv)}Y{q.Y.ToString("0.###", inv)}");
+            }
         }
         sb.AppendLine("M30");
         return sb.ToString();

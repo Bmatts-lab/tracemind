@@ -114,6 +114,7 @@ public static class Drc
             for (int j = i + 1; j < placed.Count; j++)
             {
                 if (placed[i].OnBottom != placed[j].OnBottom) continue;
+                if (placed[i].IsWireLink() || placed[j].IsWireLink()) continue; // a link is a wire above the board
                 var a = project.Courtyard(placed[i]); var b = project.Courtyard(placed[j]);
                 if (a.Intersects(b))
                 {

@@ -64,6 +64,16 @@ public sealed class DesignSession
         SelectionChanged?.Invoke();
     }
 
+    /// <summary>Swap in a modified copy of the project (e.g. after routing on a clone), with an undo point.</summary>
+    public void ReplaceWithUndo(Project p)
+    {
+        Undo.Push(Project);
+        Project = p;
+        SelectedComponents.RemoveWhere(id => p.Components.All(c => c.Id != id));
+        MarkChanged();
+        SelectionChanged?.Invoke();
+    }
+
     public void MarkSaved(string path) { FilePath = path; Dirty = false; Changed?.Invoke(); }
 
     public bool DoUndo()

@@ -25,7 +25,10 @@ public sealed class PcbCanvas : CanvasBase
     public bool[] LayerVisible { get; } = [true, true, true, true];
 
     // selection of copper
-    readonly HashSet<Guid> selTracks = [], selVias = [];
+    readonly HashSet<Guid> selTracks = [], selVias = [], selHoles = [];
+    Dictionary<Guid, Vec2>? holeDragOrig;
+    /// <summary>Draw mm rulers along the top and left edges (used for images sent to the AI).</summary>
+    public bool ShowRulers { get; set; }
     // dragging components
     Vec2? dragStart; Dictionary<Guid, Vec2>? dragOrig; bool dragMoved;
     Vec2? bandStart;
@@ -138,7 +141,8 @@ public sealed class PcbCanvas : CanvasBase
             }
             foreach (var hole in board.Holes)
             {
-                ctx.DrawEllipse(Palette.HoleNpth, new Pen(Palette.SilkTop, 0.1), P(hole.Position), hole.Diameter / 2, hole.Diameter / 2);
+                bool hs = selHoles.Contains(hole.Id);
+                ctx.DrawEllipse(Palette.HoleNpth, new Pen(hs ? Palette.Selection : Palette.SilkTop, hs ? Math.Max(0.15, 2 / Zoom) : 0.1), P(hole.Position), hole.Diameter / 2, hole.Diameter / 2);
             }
 
             // silkscreen
@@ -220,7 +224,36 @@ public sealed class PcbCanvas : CanvasBase
         }
         foreach (var t in board.Texts)
             DrawText(ctx, t.Text, t.Position, t.Size, t.Layer == Layer.BSilk ? Palette.SilkBottom : Palette.SilkTop, 1, face: Mono);
+        board.EnsureHoleRefs();
+        foreach (var hole in board.Holes)
+            DrawText(ctx, hole.Ref, hole.Position + new Vec2(0, hole.Diameter / 2 + 0.9), 0.9, Palette.Muted, 1, face: Mono, minPx: 7);
+        if (ShowRulers) DrawRulers(ctx);
     }
+
+    void DrawRulers(DrawingContext ctx)
+    {
+        var vis = VisibleWorld();
+        double span = Math.Max(vis.Width, vis.Height);
+        double stepMm = span > 150 ? 10 : span > 60 ? 5 : span > 25 ? 2 : 1;
+        var bg = new ImmutableSolidColorBrush(Color.Parse("#0D0F13"), 0.85);
+        ctx.FillRectangle(bg, new Avalonia.Rect(0, 0, Bounds.Width, 16));
+        ctx.FillRectangle(bg, new Avalonia.Rect(0, 0, 30, Bounds.Height));
+        var pen = new Pen(Palette.Muted, 1);
+        for (double x = Math.Ceiling(vis.Left / stepMm) * stepMm; x <= vis.Right; x += stepMm)
+        {
+            var sx = ToScreen(new Vec2(x, 0)).X;
+            ctx.DrawLine(pen, new Point(sx, 10), new Point(sx, 16));
+            ctx.DrawText(new FormattedText(x.ToString("0.#"), System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 10, Palette.Muted), new Point(sx + 2, 0));
+        }
+        for (double y = Math.Ceiling(vis.Top / stepMm) * stepMm; y <= vis.Bottom; y += stepMm)
+        {
+            var sy = ToScreen(new Vec2(0, y)).Y;
+            ctx.DrawLine(pen, new Point(24, sy), new Point(30, sy));
+            ctx.DrawText(new FormattedText(y.ToString("0.#"), System.Globalization.CultureInfo.InvariantCulture, FlowDirection.LeftToRight, Mono, 10, Palette.Muted), new Point(1, sy - 6));
+        }
+    }
+
+    MountingHole? HoleAt(Vec2 w) => Session.Project.Board.Holes.FirstOrDefault(h => h.Position.DistanceTo(w) <= h.Diameter / 2 + 0.3);
 
     Geometry Poly(IReadOnlyList<Vec2> pts)
     {
@@ -372,6 +405,9 @@ public sealed class PcbCanvas : CanvasBase
             {
                 foreach (var c in Session.Selection.Where(c => !c.Locked))
                     if (dragOrig.TryGetValue(c.Id, out var o)) c.PcbPos = o + delta;
+                if (holeDragOrig != null)
+                    foreach (var h in Session.Project.Board.Holes)
+                        if (holeDragOrig.TryGetValue(h.Id, out var ho)) h.Position = ho + delta;
                 Session.Invalidate(topology: false);
             }
             return;
@@ -434,6 +470,16 @@ public sealed class PcbCanvas : CanvasBase
                     bool add = e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.KeyModifiers.HasFlag(KeyModifiers.Shift);
                     var pad = PadAt(w);
                     var comp = ComponentAt(w);
+                    if (pad == null && HoleAt(w) is { } hole)
+                    {
+                        if (!add) { selTracks.Clear(); selVias.Clear(); selHoles.Clear(); Session.ClearSelection(); }
+                        selHoles.Add(hole.Id);
+                        Status($"Mounting hole {hole.Ref}: {hole.Diameter:0.##} mm at {hole.Position.X:0.###}, {hole.Position.Y:0.###}. Drag to move, Del to delete.");
+                        dragStart = w; dragMoved = false;
+                        dragOrig = [];
+                        holeDragOrig = Session.Project.Board.Holes.Where(h => selHoles.Contains(h.Id)).ToDictionary(h => h.Id, h => h.Position);
+                        break;
+                    }
                     if (pad == null)
                     {
                         if (ViaAt(w) is { } v) { SelectCopper(add, null, v); Session.SetHighlightNet(v.Net == "" ? null : v.Net); break; }
@@ -446,11 +492,11 @@ public sealed class PcbCanvas : CanvasBase
                         if (!Session.SelectedComponents.Contains(comp.Id)) Session.Select([comp], add);
                         var net = pad != null ? Session.NetOfPad(pad) : "";
                         Session.SetHighlightNet(net == "" ? null : net);
-                        dragStart = w; dragMoved = false;
+                        dragStart = w; dragMoved = false; holeDragOrig = null; selHoles.Clear();
                         dragOrig = Session.Selection.ToDictionary(c => c.Id, c => c.PcbPos);
                         break;
                     }
-                    if (!add) { selTracks.Clear(); selVias.Clear(); Session.ClearSelection(); }
+                    if (!add) { selTracks.Clear(); selVias.Clear(); selHoles.Clear(); Session.ClearSelection(); }
                     bandStart = w; e.Pointer.Capture(this);
                     break;
                 }
@@ -485,7 +531,7 @@ public sealed class PcbCanvas : CanvasBase
         if (dragStart != null)
         {
             if (dragMoved) Session.MarkChanged();
-            dragStart = null; dragOrig = null; dragMoved = false;
+            dragStart = null; dragOrig = null; holeDragOrig = null; dragMoved = false;
         }
     }
 
@@ -544,15 +590,16 @@ public sealed class PcbCanvas : CanvasBase
     public void DeleteSelection()
     {
         var p = Session.Project;
-        if (selTracks.Count == 0 && selVias.Count == 0 && Session.SelectedComponents.Count == 0) return;
+        if (selTracks.Count == 0 && selVias.Count == 0 && selHoles.Count == 0 && Session.SelectedComponents.Count == 0) return;
         Session.Mutate(() =>
         {
+            p.Board.Holes.RemoveAll(h => selHoles.Contains(h.Id));
             p.Board.Tracks.RemoveAll(t => selTracks.Contains(t.Id));
             p.Board.Vias.RemoveAll(v => selVias.Contains(v.Id));
             // deleting a footprint on the PCB un-places it (the part stays in the schematic)
             foreach (var c in Session.Selection.Where(c => !c.Locked)) c.Placed = false;
         });
-        selTracks.Clear(); selVias.Clear();
+        selTracks.Clear(); selVias.Clear(); selHoles.Clear();
         Session.ClearSelection();
     }
 }

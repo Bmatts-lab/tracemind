@@ -38,13 +38,20 @@ public partial class MainWindow : Window
         session = new DesignSession(NewProject());
         Sch.Attach(session); Pcb.Attach(session);
         Library.Attach(session); Properties.Attach(session);
-        tools = new DesignTools(() => session.Project);
+        tools = new DesignTools(() => session.Project)
+        {
+            RenderBoardImage = RenderPcbPng,
+            DefaultExportFolder = () => session.FilePath is { } fp ? Path.GetDirectoryName(fp)!
+                : session.Project.KiCadSource is { Length: > 0 } ks ? Path.GetDirectoryName(ks)!
+                : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), "TraceMind"),
+        };
         apiAgent = new ClaudeAgent(settings, tools, RunToolAsync);
         apiAgent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
         planAgent = new ClaudeCodeAgent(settings, RunToolAsync);
         planAgent.OnEvent += e => Dispatcher.UIThread.Post(() => OnAgentEvent(e));
 
         session.Changed += UpdateTitleAndStats;
+        session.Changed += SyncLayerChoices;
         session.SelectionChanged += () => { if (session.SelectedComponents.Count == 1) LeftTabs.SelectedIndex = 1; };
 
         WireMenus();
@@ -53,8 +60,9 @@ public partial class MainWindow : Window
         UpdateTitleAndStats();
         UpdateModelLabel();
         EditorTabs.SelectionChanged += (_, _) => OnEditorTabChanged();
-        Opened += (_, _) =>
+        Opened += async (_, _) =>
         {
+            await RestoreOrReopenAsync();
             Dispatcher.UIThread.Post(() => { Sch.ZoomToFit(); fitSchPending = false; }, DispatcherPriority.Background);
             if (UsePlan && ClaudeCodeAgent.FindClaude(settings.ClaudeCodePath) == null)
                 Chat.Handle(new AgentEvent(AgentEventKind.Status, "To use your Claude plan, install Claude Code — see Settings (⚙)."));
@@ -92,12 +100,70 @@ public partial class MainWindow : Window
     public ChatPanel ChatView => Chat;
     public SchematicCanvas SchematicView => Sch;
     public PcbCanvas PcbView => Pcb;
+    public Task<string> RunToolForAutomation(string name, string json) => RunToolAsync(name, JsonDocument.Parse(json).RootElement.Clone());
+
+    bool openedFromArgs;
+    readonly DispatcherTimer autosaveTimer = new() { Interval = TimeSpan.FromSeconds(60) };
+    static string AutosaveDir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TraceMind", "autosave");
+    static string AutosaveFile => Path.Combine(AutosaveDir, "autosave" + ProjectFile.Extension);
+    static string AutosaveMeta => Path.Combine(AutosaveDir, "autosave.json");
+
+    sealed record AutosaveInfo(string? OriginalPath, string Name, DateTime Saved);
+
+    /// <summary>Write a recovery copy of unsaved work.</summary>
+    void Autosave()
+    {
+        if (!session.Dirty) return;
+        try
+        {
+            Directory.CreateDirectory(AutosaveDir);
+            ProjectFile.Save(session.Project, AutosaveFile);
+            File.WriteAllText(AutosaveMeta, JsonSerializer.Serialize(new AutosaveInfo(session.FilePath, session.Project.Name, DateTime.Now)));
+        }
+        catch { /* never interrupt work for an autosave problem */ }
+    }
+
+    static void ClearAutosave()
+    {
+        try { if (File.Exists(AutosaveFile)) File.Delete(AutosaveFile); if (File.Exists(AutosaveMeta)) File.Delete(AutosaveMeta); } catch { }
+    }
+
+    /// <summary>On startup: offer to restore unsaved work, otherwise reopen the last project.</summary>
+    async Task RestoreOrReopenAsync()
+    {
+        autosaveTimer.Tick += (_, _) => Autosave();
+        autosaveTimer.Start();
+        if (File.Exists(AutosaveFile) && File.Exists(AutosaveMeta))
+        {
+            AutosaveInfo? info = null;
+            try { info = JsonSerializer.Deserialize<AutosaveInfo>(File.ReadAllText(AutosaveMeta)); } catch { }
+            var when = info?.Saved.ToString("g") ?? File.GetLastWriteTime(AutosaveFile).ToString("g");
+            if (await Dialogs.Confirm(this, "Restore unsaved work?",
+                    $"TraceMind has unsaved changes to \"{info?.Name ?? "a project"}\" from {when} (it was closed without saving, or stopped unexpectedly).\n\nRestore them?", "Restore", "Discard"))
+            {
+                try
+                {
+                    var p = ProjectFile.Load(AutosaveFile);
+                    LoadProject(p, info?.OriginalPath != null && File.Exists(info.OriginalPath) ? info.OriginalPath : null);
+                    session.MarkChanged(); // still unsaved
+                    StMessage.Text = "Restored unsaved work — save it with Ctrl+S.";
+                    return;
+                }
+                catch (Exception ex) { await Dialogs.Message(this, "Restore failed", ex.Message); }
+            }
+            ClearAutosave();
+        }
+        if (openedFromArgs || !settings.ReopenLastProject) return;
+        var last = settings.RecentFiles.FirstOrDefault(File.Exists);
+        if (last != null) { OpenPath(last); StMessage.Text = "Reopened " + last; }
+    }
 
     public void OpenPath(string path)
     {
+        openedFromArgs = true;
         try
         {
-            Project p = path.EndsWith(".kicad_pcb", StringComparison.OrdinalIgnoreCase) ? KiCadPcb.Import(File.ReadAllText(path), Path.GetFileNameWithoutExtension(path)).Project
+            Project p = path.EndsWith(".kicad_pcb", StringComparison.OrdinalIgnoreCase) ? KiCadPcb.Import(File.ReadAllText(path), Path.GetFileNameWithoutExtension(path)).Project.WithKiCadSource(path)
                 : path.EndsWith(".net", StringComparison.OrdinalIgnoreCase) ? KiCadNetlist.Import(File.ReadAllText(path), Path.GetFileNameWithoutExtension(path)).Project
                 : ProjectFile.Load(path);
             bool native = path.EndsWith(ProjectFile.Extension, StringComparison.OrdinalIgnoreCase);
@@ -148,6 +214,9 @@ public partial class MainWindow : Window
         MiAutoPlace.Click += (_, _) => AutoPlace(false);
         MiAutoPlaceAll.Click += (_, _) => AutoPlace(true);
         MiAutoroute.Click += async (_, _) => await AutorouteAsync();
+        MiAutorouteLinks.Click += async (_, _) => await AutorouteAsync(true);
+        MiExportCnc.Click += async (_, _) => await ExportCncAsync();
+        MiSaveKiCad.Click += async (_, _) => await SaveBackToKiCadAsync();
         MiClearRouting.Click += (_, _) => session.Mutate(() => { session.Project.Board.Tracks.RemoveAll(t => !t.Locked); session.Project.Board.Vias.RemoveAll(v => !v.Locked); });
         MiGndPour.Click += (_, _) => session.Mutate(() =>
         {
@@ -224,9 +293,11 @@ public partial class MainWindow : Window
         BtnRunDrc.Click += (_, _) => RunDrc();
         TbExport.Click += async (_, _) => await ExportFabAsync();
         TbSettings.Click += async (_, _) => await OpenSettings();
-        CbLayer.ItemsSource = new[] { Layer.FCu.Display(), Layer.BCu.Display() };
-        CbLayer.SelectedIndex = 0;
-        CbLayer.SelectionChanged += (_, _) => Pcb.SetLayer(CbLayer.SelectedIndex == 1 ? Layer.BCu : Layer.FCu);
+        SyncLayerChoices();
+        CbLayer.SelectionChanged += (_, _) =>
+        {
+            if (CbLayer.SelectedItem is string name && session.Project.Board.CopperLayerList().FirstOrDefault(l => l.Display() == name) is var l && l.IsCopper()) Pcb.SetLayer(l);
+        };
         var grids = new[] { 0.05, 0.1, 0.125, 0.25, 0.5, 1.0, 1.27, 2.54 };
         CbGrid.ItemsSource = grids.Select(g => g.ToString("0.###") + " mm").ToList();
         CbGrid.SelectedIndex = 3;
@@ -249,7 +320,7 @@ public partial class MainWindow : Window
     {
         var p = session.Project;
         var name = session.FilePath != null ? Path.GetFileName(session.FilePath) : p.Name;
-        Title = $"{name}{(session.Dirty ? " •" : "")} — TraceMind {AppVersion}";
+        Title = $"{name}{(session.Dirty ? " •" : "")} — TraceMind v{AppVersion}";
         int parts = p.Components.Count(c => p.Symbol(c)?.IsPower != true);
         int unplaced = p.Components.Count(c => !c.Placed && !c.DoNotPopulate && p.Footprint(c) != null && p.Symbol(c)?.IsPower != true);
         var stats = $"{parts} parts · {session.Netlist.Nets.Count} nets · {session.Connectivity.Airwires.Count} unrouted";
@@ -301,6 +372,7 @@ public partial class MainWindow : Window
         {
             ProjectFile.Save(session.Project, path);
             session.MarkSaved(path);
+            ClearAutosave();
             settings.AddRecent(path); settings.Save(); BuildRecentMenu();
             StMessage.Text = "Saved " + path;
             return true;
@@ -319,7 +391,7 @@ public partial class MainWindow : Window
             var text = await File.ReadAllTextAsync(path);
             List<string> warnings;
             Project p;
-            if (pattern.Contains("kicad_pcb")) { var r = KiCadPcb.Import(text, Path.GetFileNameWithoutExtension(path)); p = r.Project; warnings = r.Warnings; }
+            if (pattern.Contains("kicad_pcb")) { var r = KiCadPcb.Import(text, Path.GetFileNameWithoutExtension(path)); p = r.Project; p.KiCadSource = path; warnings = r.Warnings; }
             else { var r = KiCadNetlist.Import(text, Path.GetFileNameWithoutExtension(path)); p = r.Project; warnings = r.Warnings; }
             LoadProject(p, null);
             session.MarkChanged();
@@ -363,11 +435,42 @@ public partial class MainWindow : Window
         catch (Exception ex) { await Dialogs.Message(this, "Export failed", ex.Message); }
     }
 
+    async Task ExportCncAsync()
+    {
+        var mirror = await Dialogs.Confirm(this, "CNC milling files",
+            "Writes copper, board outline and drill files (mm) with the board's lower-left corner at 0,0.\n\nAlso write mirrored bottom-side files for milling from the back?", "Yes, include mirrored", "No");
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Choose an output folder for CNC files" });
+        var dir = folders.Count > 0 ? folders[0].TryGetLocalPath() : null;
+        if (dir == null) return;
+        try
+        {
+            var outDir = Path.Combine(dir, GerberExporter.Sanitize(session.Project.Name) + "-cnc");
+            var res = GerberExporter.Export(session.Project, outDir, new ExportOptions { Assembly = false, Origin = "lower_left", MirrorBottom = mirror, Zip = false });
+            await Dialogs.Message(this, "CNC files exported", $"Wrote {res.Files.Count} files to\n{outDir}\n\n- " + string.Join("\n- ", res.Files.Select(Path.GetFileName)) +
+                (res.Warnings.Count > 0 ? "\n\nNotes:\n- " + string.Join("\n- ", res.Warnings) : ""));
+            _ = Launcher.LaunchDirectoryInfoAsync(new DirectoryInfo(outDir));
+        }
+        catch (Exception ex) { await Dialogs.Message(this, "Export failed", ex.Message); }
+    }
+
+    async Task SaveBackToKiCadAsync()
+    {
+        var path = session.Project.KiCadSource;
+        if (string.IsNullOrEmpty(path))
+        {
+            await ExportTextAsync("KiCad board", ".kicad_pcb", () => KiCadPcb.Export(session.Project));
+            return;
+        }
+        if (!await Dialogs.Confirm(this, "Save to KiCad", $"Overwrite\n{path}\nwith the current board? The old file is kept as .kicad_pcb.bak.", "Save")) return;
+        try { KiCadPcb.SaveTo(session.Project, path); StMessage.Text = "Saved " + path; }
+        catch (Exception ex) { await Dialogs.Message(this, "Save failed", ex.Message); }
+    }
+
     async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
-        if (closingConfirmed || !session.Dirty) { agentCts?.Cancel(); return; }
+        if (closingConfirmed || !session.Dirty) { agentCts?.Cancel(); if (!session.Dirty) ClearAutosave(); return; }
         e.Cancel = true;
-        if (await ConfirmDiscard()) { closingConfirmed = true; Close(); }
+        if (await ConfirmDiscard()) { closingConfirmed = true; ClearAutosave(); Close(); }
     }
 
     // ======================= PCB commands =======================
@@ -381,7 +484,9 @@ public partial class MainWindow : Window
         Pcb.ZoomToFit();
     }
 
-    async Task AutorouteAsync()
+    async Task AutorouteAsync() => await AutorouteAsync(false);
+
+    async Task AutorouteAsync(bool wireLinks)
     {
         if (routing) return;
         routing = true;
@@ -391,13 +496,68 @@ public partial class MainWindow : Window
         {
             var clone = ProjectFile.Clone(session.Project);
             var progress = new Progress<string>(s => StMessage.Text = s);
-            var res = await Task.Run(() => new AutoRouter(clone, new RouterOptions(), progress).Route());
-            session.Mutate(() => { session.Project.Board.Tracks = clone.Board.Tracks; session.Project.Board.Vias = clone.Board.Vias; });
+            var res = await Task.Run(() => new AutoRouter(clone, new RouterOptions { WireLinks = wireLinks }, progress).Route());
+            ApplyRouted(clone);
             RunDrc();
-            StMessage.Text = res.Summary();
+            StMessage.Text = res.Summary() + (res.LinksAdded.Count > 0 ? $" Wire links added: {string.Join(", ", res.LinksAdded)}." : "");
+            ShowRouteFailures(res);
         }
         catch (Exception ex) { await Dialogs.Message(this, "Autorouter", ex.Message); }
         finally { routing = false; TbAutoroute.IsEnabled = true; }
+    }
+
+    /// <summary>Bring the result of routing on a copy back into the open project.</summary>
+    void ApplyRouted(Project clone)
+    {
+        bool newParts = clone.Components.Count != session.Project.Components.Count;
+        if (newParts) session.ReplaceWithUndo(clone); // the router added wire links
+        else session.Mutate(() => { session.Project.Board.Tracks = clone.Board.Tracks; session.Project.Board.Vias = clone.Board.Vias; });
+    }
+
+    /// <summary>List where failed nets are blocked at the top of the Problems panel.</summary>
+    void ShowRouteFailures(RouteResult res)
+    {
+        if (res.Failures.Count == 0) return;
+        var items = (Problems.ItemsSource as IEnumerable<ListBoxItem>)?.ToList() ?? [];
+        var extra = res.Failures.Select(f => new ListBoxItem
+        {
+            Tag = new DrcViolation(Severity.Error, "route", f.ToString(), f.Crossings.FirstOrDefault()?.Middle ?? Vec2.Zero),
+            Padding = new Thickness(10, 2),
+            Content = new TextBlock { Text = "⛔  " + f, Foreground = Palette.ChatErrorText, TextWrapping = Avalonia.Media.TextWrapping.Wrap },
+        });
+        Problems.ItemsSource = extra.Concat(items).ToList();
+    }
+
+    byte[]? RenderPcbPng(TraceMind.Core.Geometry.Rect? region)
+    {
+        try
+        {
+            var area = region ?? session.Project.Board.OutlineBounds().Inflate(2);
+            double aspect = Math.Clamp(area.Width / Math.Max(area.Height, 1), 0.4, 2.5);
+            int w = 1400, h = (int)Math.Round(w / aspect);
+            if (h > 1400) { h = 1400; w = (int)Math.Round(h * aspect); }
+            var canvas = new PcbCanvas { Width = w, Height = h, ShowRulers = true };
+            canvas.Attach(new DesignSession(session.Project));
+            canvas.SetLayer(Pcb.ActiveLayer);
+            canvas.Measure(new Size(w, h)); canvas.Arrange(new Avalonia.Rect(0, 0, w, h));
+            if (region is { } r) canvas.ZoomToRect(r); else canvas.ZoomToFit();
+            using var bmp = new Avalonia.Media.Imaging.RenderTargetBitmap(new PixelSize(w, h), new Vector(96, 96));
+            bmp.Render(canvas);
+            using var ms = new MemoryStream();
+            bmp.Save(ms);
+            return ms.ToArray();
+        }
+        catch { return null; }
+    }
+
+    void SyncLayerChoices()
+    {
+        var layers = session.Project.Board.CopperLayerList().Select(l => l.Display()).ToList();
+        if (CbLayer.ItemsSource is IEnumerable<string> cur && cur.SequenceEqual(layers)) return;
+        CbLayer.ItemsSource = layers;
+        var active = session.Project.Board.CopperLayerList().Contains(Pcb.ActiveLayer) ? Pcb.ActiveLayer : session.Project.Board.CopperLayerList().First();
+        CbLayer.SelectedItem = active.Display();
+        Pcb.SetLayer(active);
     }
 
     void RunDrc()
@@ -517,7 +677,7 @@ public partial class MainWindow : Window
             var result = await Task.Run(() => cloneTools.Execute(name, input));
             await Dispatcher.UIThread.InvokeAsync(() =>
             {
-                session.Mutate(() => { session.Project.Board.Tracks = clone.Board.Tracks; session.Project.Board.Vias = clone.Board.Vias; });
+                ApplyRouted(clone);
                 if (EditorTabs.SelectedIndex != 1) EditorTabs.SelectedIndex = 1;
                 session.LastDrc = Drc.Run(session.Project);
                 ShowProblems(session.LastDrc);

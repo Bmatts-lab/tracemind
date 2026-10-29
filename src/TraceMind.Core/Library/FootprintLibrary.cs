@@ -25,7 +25,7 @@ public static partial class FootprintLibrary
         "PinHeader_1x04_P2.54", "PinHeader_2x05_P2.54", "PinHeader_1x03_P2.00", "JST_PH_1x02", "JST_XH_1x03",
         "Axial_P10.16", "CP_Radial_D5.0_P2.00", "CP_Radial_D8.0_P3.50", "LED_D5.0", "LED_D3.0",
         "Crystal_HC49-4H", "Crystal_SMD_3225-4P", "SW_Tactile_6x6", "SW_SMD_4x4", "TestPoint_Pad_D1.5", "MountingHole_3.2mm",
-        "Inductor_SMD_4x4", "Inductor_SMD_6x6", "USB_Micro_B", "BarrelJack_5.5x2.1",
+        "Inductor_SMD_4x4", "Inductor_SMD_6x6", "USB_Micro_B", "BarrelJack_5.5x2.1", "WireLink_P7.62", "WireLink_P10.16", "WireLink_P12.7",
     ];
 
     public static FootprintDef? Get(string id)
@@ -91,6 +91,7 @@ public static partial class FootprintLibrary
         if ((m = RadialRx().Match(id)).Success) return Radial(id, D(m.Groups[1].Value), D(m.Groups[2].Value), true);
         if ((m = LedThtRx().Match(id)).Success) return Radial(id, D(m.Groups[1].Value), 2.54, false);
         if ((m = TpRx().Match(id)).Success) return TestPad(id, D(m.Groups[1].Value));
+        if ((m = LinkRx().Match(id)).Success) return WireLink(id, D(m.Groups[1].Value));
         return null;
     }
 
@@ -107,6 +108,7 @@ public static partial class FootprintLibrary
     [GeneratedRegex(@"^CP_Radial_D(\d+(?:\.\d+)?)_P(\d+(?:\.\d+)?)", RegexOptions.IgnoreCase)] private static partial Regex RadialRx();
     [GeneratedRegex(@"^LED_D(\d+(?:\.\d+)?)", RegexOptions.IgnoreCase)] private static partial Regex LedThtRx();
     [GeneratedRegex(@"^TestPoint_Pad_D(\d+(?:\.\d+)?)", RegexOptions.IgnoreCase)] private static partial Regex TpRx();
+    [GeneratedRegex(@"^WireLink_P(\d+(?:\.\d+)?)$", RegexOptions.IgnoreCase)] private static partial Regex LinkRx();
 
     // ---------- helpers ----------
 
@@ -397,6 +399,17 @@ public static partial class FootprintLibrary
         f.Pads.Add(Tht("3", -3.0, 4.7, 3.5, 3.5, 2.0, PadShape.Oval));
         f.Courtyard = new Rect(-14.5, -5, 0.75 + 1.5, 6.5);
         f.Silk.Add(Graphic.RectG(new(-14.2, -4.6), new(0.8, 4.6)));
+        return f;
+    }
+
+    /// <summary>Wire link / jumper: two THT pads (2.0 mm, 1.0 mm drill) joined by a wire on the component side.</summary>
+    public static FootprintDef WireLink(string id, double pitch)
+    {
+        var f = new FootprintDef { Id = id, Name = id, Description = $"Wire link, {pitch} mm ({pitch / 25.4:0.0#}\") spacing, 1.0 mm drill", Height = 1 };
+        f.Pads.Add(Tht("1", -pitch / 2, 0, 2.0, 2.0, 1.0, PadShape.Circle));
+        f.Pads.Add(Tht("2", pitch / 2, 0, 2.0, 2.0, 1.0, PadShape.Circle));
+        f.Courtyard = new Rect(-pitch / 2 - 1.25, -1.25, pitch / 2 + 1.25, 1.25);
+        f.Silk.Add(Graphic.Line(new(-pitch / 2 + 1.3, 0), new(pitch / 2 - 1.3, 0)));
         return f;
     }
 

@@ -114,10 +114,13 @@ public sealed class McpBridge : IDisposable
                 string text;
                 try { text = await runTool(name, args); }
                 catch (Exception ex) { text = JsonSerializer.Serialize(new { ok = false, error = ex.Message }); }
-                ToolFinished?.Invoke(name, text);
+                var (plain, png) = ClaudeAgent.SplitImage(text);
+                ToolFinished?.Invoke(name, plain);
+                var content = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = plain });
+                if (png != null) content.Add(new JsonObject { ["type"] = "image", ["data"] = png, ["mimeType"] = "image/png" });
                 return Result(new JsonObject
                 {
-                    ["content"] = new JsonArray(new JsonObject { ["type"] = "text", ["text"] = text }),
+                    ["content"] = content,
                     ["isError"] = text.StartsWith("{\"ok\":false"),
                 });
             default:

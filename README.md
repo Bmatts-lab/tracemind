@@ -12,13 +12,15 @@ The AI can run on **the Claude plan you already have** (Pro / Max) through Claud
 |---|---|
 | **⚡ Build a board** | Type a description ("ESP32-C3 sensor board, USB-C, BME280, 40×30 mm, JLCPCB assembly"). Claude picks parts (with LCSC numbers), builds the schematic with all support parts, sizes the board, places, routes, runs DRC and fixes errors. |
 | **Find parts** | Claude searches distributors and datasheets on the web and records MPN, manufacturer, LCSC number and datasheet on each part. |
-| **Routing** | A built-in grid autorouter that handles clearances, vias, net classes and rip-up/retry. Claude steers it: routing order, power widths, which nets a pour handles, and layer locks. |
+| **Routing** | A built-in grid autorouter that handles clearances, vias, net classes and rip-up/retry. Claude steers it: routing order, power widths, which nets a pour handles, and layer locks. Power nets keep full width where there's room and narrow in tight spots. When a net fails, the router reports exactly where it's blocked. |
+| **Single-sided / CNC** | 1-layer boards (top or bottom copper). Wire links (2 mm pads, 1 mm drill, 0.3/0.4/0.5") are inserted automatically where nets must cross. CNC export uses a lower-left origin and can mirror the bottom side. |
+| **Claude edits copper** | Claude can see the board (a list plus an image with rulers), draw tracks point by point, move or delete tracks, set per-segment widths, and add vias, wire links and mounting holes. |
 | **Review** | Ask Claude to review the design. It reads the full netlist and layout and checks for missing decoupling, floating pins, DRC problems and similar issues. |
 | **Schematic editor** | Symbols, wires, net labels, no-connect flags, net highlighting, undo/redo, auto-tidy. |
 | **PCB editor** | Placement (move, rotate, flip, lock), interactive 45° routing with vias, copper pours, ratsnest, DRC markers, 2 or 4 layers. |
 | **Footprints** | Parametric library (0402–2512, SOT-23/223/89, SOIC/TSSOP/MSOP/SSOP, DIP, QFN, TQFP/LQFP, headers, JST, USB, crystals, switches…). Claude builds custom footprints from datasheet land patterns. |
 | **Manufacturing** | Gerber X2 for all layers, Excellon drill (PTH and NPTH), BOM and CPL in JLCPCB format, zipped and ready to upload. |
-| **KiCad** | Import and export `.kicad_pcb` and KiCad netlists (`.net`). |
+| **KiCad** | Open, edit and save back `.kicad_pcb` boards (KiCad 7/8/9 format, keeps a `.bak`), and import and export KiCad netlists. Optionally exports through `kicad-cli`. |
 
 ## Getting started
 
@@ -63,5 +65,6 @@ Everywhere: wheel to zoom, middle or right drag to pan, `F` to zoom to fit.
 ## Known limitations
 
 - Copper pours have solid connections (no thermal reliefs) and don't remove isolated islands.
-- KiCad schematic files (`.kicad_sch`) aren't imported yet. Use a netlist or `.kicad_pcb`.
+- KiCad schematic files (`.kicad_sch`) can't be opened or edited yet. Use a netlist or `.kicad_pcb`.
+- Copper zones, arcs and custom-shaped pads in imported KiCad boards are simplified (arcs become short segments; custom pads become rectangles).
 - The autorouter works on a grid. It's good for typical 2-layer hobby and prototype boards, but not for high-speed or length-matched routing.
