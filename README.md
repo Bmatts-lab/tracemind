@@ -68,3 +68,7 @@ Everywhere: wheel to zoom, middle or right drag to pan, `F` to zoom to fit.
 - KiCad schematic files (`.kicad_sch`) can't be opened or edited yet. Use a netlist or `.kicad_pcb`.
 - Copper zones, arcs and custom-shaped pads in imported KiCad boards are simplified (arcs become short segments; custom pads become rectangles).
 - The autorouter works on a grid. It's good for typical 2-layer hobby and prototype boards, but not for high-speed or length-matched routing.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

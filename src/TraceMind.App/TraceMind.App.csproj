@@ -11,6 +11,7 @@
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
     <Version>0.3.1</Version>
     <Product>TraceMind</Product>
+    <Copyright>Copyright (c) 2026 c65vsdpsyz-dot. MIT License.</Copyright>
     <Description>AI-assisted PCB design</Description>
     <InvariantGlobalization>true</InvariantGlobalization>
   </PropertyGroup>
