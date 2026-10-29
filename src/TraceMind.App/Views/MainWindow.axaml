@@ -5,7 +5,7 @@
         x:Class="TraceMind.App.Views.MainWindow"
         Title="TraceMind"
         Icon="/Assets/tracemind.ico"
-        Width="1560" Height="940" MinWidth="1000" MinHeight="640"
+        Width="1560" Height="940" MinWidth="760" MinHeight="500"
         WindowStartupLocation="CenterScreen">
   <DockPanel>
     <!-- ===== Menu ===== -->

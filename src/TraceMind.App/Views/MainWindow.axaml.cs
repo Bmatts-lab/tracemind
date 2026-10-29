@@ -62,6 +62,7 @@ public partial class MainWindow : Window
         EditorTabs.SelectionChanged += (_, _) => OnEditorTabChanged();
         Opened += async (_, _) =>
         {
+            FitToScreen();
             await RestoreOrReopenAsync();
             Dispatcher.UIThread.Post(() => { Sch.ZoomToFit(); fitSchPending = false; }, DispatcherPriority.Background);
             if (UsePlan && ClaudeCodeAgent.FindClaude(settings.ClaudeCodePath) == null)
@@ -466,8 +467,50 @@ public partial class MainWindow : Window
         catch (Exception ex) { await Dialogs.Message(this, "Save failed", ex.Message); }
     }
 
+    /// <summary>
+    /// Make sure the whole window (including the title-bar buttons) is on screen: restore the last size/position if it
+    /// still fits a monitor, otherwise maximize when the default size is larger than the screen (small / high-DPI laptops).
+    /// </summary>
+    void FitToScreen()
+    {
+        var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
+        if (screen == null) return;
+        double sc = screen.Scaling;
+        var wa = screen.WorkingArea;
+        double maxW = wa.Width / sc, maxH = wa.Height / sc;
+        if (settings.WindowMaximized) { WindowState = WindowState.Maximized; return; }
+        if (settings.WindowWidth > 0 && settings.WindowHeight > 0)
+        {
+            var px = new PixelPoint((int)settings.WindowX, (int)settings.WindowY);
+            var target = Screens.All.FirstOrDefault(s => s.WorkingArea.Contains(px) && s.WorkingArea.Contains(new PixelPoint(px.X + (int)(settings.WindowWidth * s.Scaling) - 1, px.Y + 40)));
+            if (target != null && settings.WindowWidth <= target.WorkingArea.Width / target.Scaling && settings.WindowHeight <= target.WorkingArea.Height / target.Scaling)
+            {
+                Width = settings.WindowWidth; Height = settings.WindowHeight; Position = px;
+                return;
+            }
+        }
+        if (Width > maxW - 8 || Height > maxH - 8)
+        {
+            Width = Math.Min(Width, maxW - 8); Height = Math.Min(Height, maxH - 8);
+            Position = new PixelPoint(wa.X + 4, wa.Y + 4);
+            WindowState = WindowState.Maximized;
+        }
+    }
+
+    void SaveWindowPlacement()
+    {
+        settings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (WindowState == WindowState.Normal)
+        {
+            settings.WindowX = Position.X; settings.WindowY = Position.Y;
+            settings.WindowWidth = Bounds.Width; settings.WindowHeight = Bounds.Height;
+        }
+        try { settings.Save(); } catch { }
+    }
+
     async void OnClosing(object? sender, WindowClosingEventArgs e)
     {
+        SaveWindowPlacement();
         if (closingConfirmed || !session.Dirty) { agentCts?.Cancel(); if (!session.Dirty) ClearAutosave(); return; }
         e.Cancel = true;
         if (await ConfirmDiscard()) { closingConfirmed = true; ClearAutosave(); Close(); }

@@ -1,3 +1,10 @@
+# TraceMind v0.3.1
+
+**Download:** `TraceMind.exe` below. It's a single file and needs no install. If Windows SmartScreen warns you, click **More info → Run anyway**.
+
+## Fixed in v0.3.1
+- The window now fits your screen. On laptops or with Windows display scaling, the window could be wider than the screen, which pushed the minimize, maximize and close buttons off the edge. TraceMind now opens maximized when the screen is smaller than the window, and it remembers its size, position and maximized state between runs.
+
 # TraceMind v0.3.0
 
 **Download:** `TraceMind.exe` below. It's a single file and needs no install. If Windows SmartScreen warns you, click **More info → Run anyway**.

@@ -26,6 +26,12 @@ public sealed class AgentSettings
     public List<string> RecentFiles { get; set; } = [];
     /// <summary>Reopen the most recent project when TraceMind starts.</summary>
     public bool ReopenLastProject { get; set; } = true;
+    // Main window placement (device-independent pixels); 0 = not saved yet.
+    public double WindowX { get; set; }
+    public double WindowY { get; set; }
+    public double WindowWidth { get; set; }
+    public double WindowHeight { get; set; }
+    public bool WindowMaximized { get; set; }
 
     static string Dir => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "TraceMind");
     static string FilePath => Path.Combine(Dir, "settings.json");
