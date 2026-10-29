@@ -1,3 +1,10 @@
+# TraceMind v0.3.2
+
+**Download:** `TraceMind.exe` below. It's a single file and needs no install.
+
+## Fixed in v0.3.2
+- DRC now checks mounting holes. It flags holes that are closer to the board edge than the edge-clearance rule, holes that cross or sit outside the edge, holes too close to copper, and overlapping holes. Before this fix, a hole 0.4 mm from the edge passed with a 1.0 mm rule.
+
 # TraceMind v0.3.1
 
 **Download:** `TraceMind.exe` below. It's a single file and needs no install. If Windows SmartScreen warns you, click **More info → Run anyway**.

@@ -95,3 +95,19 @@ public class RouterFeatureTests(ITestOutputHelper output)
         Assert.Equal(0, drc.Unrouted);
     }
 }
+
+public class HoleDrcTests
+{
+    [Fact]
+    public void HoleTooCloseToEdgeIsFlagged()
+    {
+        var p = new Project();
+        p.Board.Outline = [new(0, 0), new(70, 0), new(70, 82), new(0, 82)];
+        p.Board.Rules.EdgeClearance = 1.0;
+        p.Board.Holes.Add(new MountingHole { Position = new(68, 2.6), Diameter = 3.2 }); // edge 0.4 mm from the right side
+        p.Board.Holes.Add(new MountingHole { Position = new(10, 10), Diameter = 3.2 });
+        var drc = Drc.Run(p);
+        Assert.Contains(drc.Violations, v => v.Code == "hole_edge" && v.Message.Contains("H1") && v.Message.Contains("0.4"));
+        Assert.DoesNotContain(drc.Violations, v => v.Code == "hole_edge" && v.Message.Contains("H2"));
+    }
+}

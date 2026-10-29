@@ -104,6 +104,35 @@ public static class Drc
         }
         else report.Violations.Add(new(Severity.Error, "outline", "Board has no outline", Vec2.Zero));
 
+        // ---- Mounting holes: board edge and copper ----
+        project.Board.EnsureHoleRefs();
+        foreach (var h in project.Board.Holes)
+        {
+            var hs = Shape.Circle(h.Position, h.Diameter / 2);
+            if (outline.Count >= 3)
+            {
+                bool inside = ProjectGeometry.PointInPolygon(outline, h.Position);
+                double edge = ProjectGeometry.DistanceToPolygonEdge(outline, h.Position) - h.Diameter / 2;
+                if (!inside || edge < 0)
+                    report.Violations.Add(new(Severity.Error, "hole_edge", $"Mounting hole {h.Ref} crosses or is outside the board edge", h.Position, h.Ref));
+                else if (edge < rules.EdgeClearance - 1e-4)
+                    report.Violations.Add(new(Severity.Error, "hole_edge", $"Mounting hole {h.Ref} edge is {edge:0.##} mm from the board edge (min {rules.EdgeClearance})", h.Position, h.Ref));
+            }
+            foreach (var it in items)
+            {
+                var d = Shape.Distance(hs, it.Shape);
+                if (d < rules.Clearance - 1e-4)
+                    report.Violations.Add(new(Severity.Error, "hole_clearance", $"Mounting hole {h.Ref} is {Math.Max(0, d):0.##} mm from {it.Describe()} [{(it.Net == "" ? "no net" : it.Net)}] (min {rules.Clearance})", h.Position, h.Ref));
+            }
+        }
+        for (int i = 0; i < project.Board.Holes.Count; i++)
+            for (int j = i + 1; j < project.Board.Holes.Count; j++)
+            {
+                var a = project.Board.Holes[i]; var b = project.Board.Holes[j];
+                if (a.Position.DistanceTo(b.Position) < (a.Diameter + b.Diameter) / 2 + rules.Clearance)
+                    report.Violations.Add(new(Severity.Error, "hole_overlap", $"Mounting holes {a.Ref} and {b.Ref} overlap", (a.Position + b.Position) / 2, a.Ref));
+            }
+
         // ---- Placement ----
         var placed = project.Components.Where(c => c.Placed && !c.DoNotPopulate && project.Footprint(c) != null).ToList();
         foreach (var c in project.Components.Where(c => !c.Placed && !c.DoNotPopulate && project.Footprint(c) != null && project.Symbol(c)?.IsPower != true))

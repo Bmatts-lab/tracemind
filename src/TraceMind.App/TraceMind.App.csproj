@@ -9,7 +9,7 @@
     <ApplicationIcon>Assets\tracemind.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AvaloniaUseCompiledBindingsByDefault>false</AvaloniaUseCompiledBindingsByDefault>
-    <Version>0.3.1</Version>
+    <Version>0.3.2</Version>
     <Product>TraceMind</Product>
     <Copyright>Copyright (c) 2026 Bmatts-lab. MIT License.</Copyright>
     <Description>AI-assisted PCB design</Description>
